@@ -17,6 +17,14 @@ init().then(async () => {
 
   await universe.seed(9, 400, Settings.balanced());
 
+  window.addEventListener("keydown", ev => {
+    switch (ev.key) {
+      case "w":
+        universe.wrap = !universe.wrap;
+        break;
+    }
+  })
+
   function draw() {
     ctx.fillStyle = "black";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
