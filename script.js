@@ -10,22 +10,22 @@ init().then(async () => {
   const ctx = canvas.getContext("2d", { alpha: false });
 
   canvas.width = canvas.offsetWidth;
-  canvas.height = canvas.offsetHeight
+  canvas.height = canvas.offsetHeight;
   const universe = Universe.new(canvas.width, canvas.height);
 
   universe.wrap = true;
 
   await universe.seed(9, 400, Settings.balanced());
 
-  window.addEventListener("keydown", ev => {
+  window.addEventListener("keydown", (ev) => {
     switch (ev.key) {
       case "w":
         universe.wrap = !universe.wrap;
         break;
     }
-  })
+  });
 
-  function draw() {
+  const draw = () => {
     ctx.fillStyle = "black";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -35,7 +35,7 @@ init().then(async () => {
     }
 
     requestAnimationFrame(draw);
-  }
+  };
 
   requestAnimationFrame(draw);
 });
