@@ -1,11 +1,23 @@
 use std::f64::consts::TAU;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::Mutex;
 
+use futures::future::join_all;
+use futures::Future;
+use futures::FutureExt;
+use js_sys::Promise;
 use rand::rngs::OsRng;
 use rand_distr::Distribution;
 use rand_distr::Normal;
 use rand_distr::Uniform;
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
+use wasm_bindgen_futures::future_to_promise;
+use wasm_bindgen_futures::JsFuture;
 use web_sys::CanvasRenderingContext2d;
+use web_sys::HtmlCanvasElement;
+use web_sys::ImageBitmap;
 
 use crate::particle::Particle;
 use crate::utils::set_panic_hook;
@@ -51,7 +63,7 @@ pub struct Universe {
     flat_force: bool,
     friction: f64,
 
-    colors: Vec<JsValue>,
+    sprites: Arc<Mutex<Vec<ImageBitmap>>>,
     attractions: Vec<Vec<f64>>,
     min_radii: Vec<Vec<f64>>,
     max_radii: Vec<Vec<f64>>,
@@ -72,7 +84,7 @@ impl Universe {
             flat_force: false,
             friction: 0.05,
 
-            colors: Vec::new(),
+            sprites: Arc::new(Mutex::new(Vec::new())),
             attractions: Vec::new(),
             min_radii: Vec::new(),
             max_radii: Vec::new(),
@@ -81,22 +93,20 @@ impl Universe {
         }
     }
 
-    pub fn seed(&mut self, types: usize, particles: usize, settings: &Settings) {
+    pub fn seed(&mut self, types: usize, particles: usize, settings: &Settings) -> Promise {
         self.friction = settings.friction;
         self.flat_force = settings.flat_force;
-
-        self.seed_types(types, settings);
 
         let type_dist = Uniform::new(0, types - 1);
         let (x_dist, y_dist) = if self.wrap {
             (
-                Uniform::new(0.25, self.width as f64 * 0.75),
-                Uniform::new(0.25, self.height as f64 * 0.75),
+                Uniform::new(0.0, self.width),
+                Uniform::new(0.0, self.height),
             )
         } else {
             (
-                Uniform::new(0.0, self.width as f64),
-                Uniform::new(0.0, self.height as f64),
+                Uniform::new(self.width * 0.25, self.width * 0.75),
+                Uniform::new(self.height * 0.25, self.height * 0.75),
             )
         };
         let vel_dist = Normal::new(0.0, 0.2).unwrap();
@@ -111,22 +121,62 @@ impl Universe {
                 vy: vel_dist.sample(&mut OsRng),
             })
         }
+
+        future_to_promise(
+            self.seed_types(types, settings)
+                .map(|res| res.map(|_| JsValue::UNDEFINED)),
+        )
     }
 
-    pub fn seed_types(&mut self, num: usize, settings: &Settings) {
+    fn seed_types(
+        &mut self,
+        num: usize,
+        settings: &Settings,
+    ) -> Pin<Box<dyn Future<Output = Result<(), JsValue>>>> {
         let attr_dist = Normal::new(settings.attract_mean, settings.attract_std).unwrap();
         let minr_dist = Uniform::new(settings.minr_lower, settings.minr_upper);
         let maxr_dist = Uniform::new(settings.maxr_lower, settings.maxr_upper);
-        self.colors = Vec::with_capacity(num);
+
+        let mut sprites: Vec<JsFuture> = Vec::with_capacity(num);
         self.attractions = Vec::with_capacity(num);
         self.min_radii = Vec::with_capacity(num);
         self.max_radii = Vec::with_capacity(num);
+
+        let window = web_sys::window().unwrap();
+        let canvas: HtmlCanvasElement = window
+            .document()
+            .unwrap()
+            .create_element("canvas")
+            .unwrap()
+            .dyn_into()
+            .unwrap();
+        // Make the canvas slightly larger than what we're drawing to prevent weird clipping.
+        canvas.set_width(DIAMETER as u32 + 2);
+        canvas.set_height(DIAMETER as u32 + 2);
+        let ctx: CanvasRenderingContext2d = canvas
+            .get_context("2d")
+            .unwrap()
+            .unwrap()
+            .dyn_into()
+            .unwrap();
+
         for i in 0..num {
-            self.colors.push(JsValue::from_str(&format!(
+            // Draw the ellipse once now, and then just draw it back onto the canvas every time to save performance.
+            ctx.clear_rect(0.0, 0.0, DIAMETER + 2.0, DIAMETER + 2.0);
+            ctx.set_fill_style(&JsValue::from_str(&format!(
                 "hsl({}, 100%, {}%)",
                 i as f64 / num as f64 * 360.0,
                 (i % 2 + 1) * 25
             )));
+            ctx.begin_path();
+            ctx.ellipse(RADIUS + 1.0, RADIUS + 1.0, RADIUS, RADIUS, 0.0, 0.0, TAU)
+                .unwrap();
+            ctx.fill();
+            sprites.push(JsFuture::from(
+                window
+                    .create_image_bitmap_with_html_canvas_element(&canvas)
+                    .unwrap(),
+            ));
             self.attractions.push(Vec::with_capacity(num));
             self.min_radii.push(Vec::with_capacity(num));
             self.max_radii.push(Vec::with_capacity(num));
@@ -155,6 +205,19 @@ impl Universe {
                 self.max_radii[i].push(max_radius);
             }
         }
+
+        let self_sprites = self.sprites.clone();
+
+        async move {
+            let sprites = join_all(sprites).await;
+            *self_sprites.lock().unwrap() = sprites
+                .into_iter()
+                .map(|res| res.map(|bitmap| bitmap.dyn_into().unwrap()))
+                .collect::<Result<_, _>>()?;
+
+            Ok(())
+        }
+        .boxed_local()
     }
 
     pub fn step(&mut self) {
@@ -243,34 +306,47 @@ impl Universe {
                     p.y -= self.height;
                 }
             } else {
-                if p.x <= DIAMETER {
+                if p.x <= 0.0 {
                     p.vx *= -1.0;
-                    p.x = DIAMETER;
-                } else if p.x >= self.width - DIAMETER {
+                    p.x = 0.0;
+                } else if p.x >= self.width - DIAMETER - 2.0 {
                     p.vx *= -1.0;
-                    p.x = self.width - DIAMETER;
+                    p.x = self.width - DIAMETER - 2.0;
                 }
 
-                if p.y <= DIAMETER {
+                if p.y <= 0.0 {
                     p.vy *= -1.0;
-                    p.y = DIAMETER;
-                } else if p.y >= self.height - DIAMETER {
+                    p.y = 0.0;
+                } else if p.y >= self.height - DIAMETER - 2.0 {
                     p.vy *= -1.0;
-                    p.y = self.height - DIAMETER;
+                    p.y = self.height - DIAMETER - 2.0;
                 }
             }
         }
     }
 
-    pub fn draw(&self, ctx: CanvasRenderingContext2d) {
-        ctx.set_fill_style(&JsValue::from_str("black"));
-        ctx.fill_rect(0.0, 0.0, self.width, self.height);
+    pub fn draw(&self, ctx: CanvasRenderingContext2d, opacity: f64) -> Result<(), JsValue> {
+        let sprites = self.sprites.lock().unwrap();
+        ctx.set_global_alpha(opacity);
         for p in self.particles.iter() {
-            ctx.set_fill_style(&self.colors[p.r#type]);
-            ctx.begin_path();
-            ctx.ellipse(p.x, p.y, RADIUS, RADIUS, 0.0, 0.0, TAU)
-                .unwrap();
-            ctx.fill();
+            ctx.draw_image_with_image_bitmap(&sprites[p.r#type], p.x, p.y)?;
+
+            if self.wrap {
+                if p.x > self.width - DIAMETER - 2.0 {
+                    if p.y > self.height - DIAMETER - 2.0 {
+                        ctx.draw_image_with_image_bitmap(
+                            &sprites[p.r#type],
+                            p.x - self.width,
+                            p.y - self.height,
+                        )?;
+                    }
+                    ctx.draw_image_with_image_bitmap(&sprites[p.r#type], p.x - self.width, p.y)?;
+                }
+                if p.y > self.height - DIAMETER - 2.0 {
+                    ctx.draw_image_with_image_bitmap(&sprites[p.r#type], p.x, p.y - self.height)?;
+                }
+            }
         }
+        Ok(())
     }
 }
