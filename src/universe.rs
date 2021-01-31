@@ -179,16 +179,16 @@ impl Universe {
         self.friction = settings.friction;
         self.flat_force = settings.flat_force;
 
-        let type_dist = Uniform::new(0, types - 1);
+        let type_dist = Uniform::new(0, types);
         let (x_dist, y_dist) = if self.wrap {
             (
-                Uniform::new(0.0, self.width),
-                Uniform::new(0.0, self.height),
+                Uniform::new_inclusive(0.0, self.width),
+                Uniform::new_inclusive(0.0, self.height),
             )
         } else {
             (
-                Uniform::new(self.width * 0.25, self.width * 0.75),
-                Uniform::new(self.height * 0.25, self.height * 0.75),
+                Uniform::new_inclusive(self.width * 0.25, self.width * 0.75),
+                Uniform::new_inclusive(self.height * 0.25, self.height * 0.75),
             )
         };
         let vel_dist = Normal::new(0.0, 0.2).unwrap();
@@ -209,8 +209,8 @@ impl Universe {
 
     async fn seed_types(&mut self, num: usize, settings: &Settings) -> Result<(), JsValue> {
         let attr_dist = Normal::new(settings.attract_mean, settings.attract_std).unwrap();
-        let minr_dist = Uniform::new(settings.minr_lower, settings.minr_upper);
-        let maxr_dist = Uniform::new(settings.maxr_lower, settings.maxr_upper);
+        let minr_dist = Uniform::new_inclusive(settings.minr_lower, settings.minr_upper);
+        let maxr_dist = Uniform::new_inclusive(settings.maxr_lower, settings.maxr_upper);
 
         self.attractions = Vec::with_capacity(num);
         self.min_radii = Vec::with_capacity(num);

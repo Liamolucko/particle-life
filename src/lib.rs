@@ -1,9 +1,9 @@
 mod particle;
 mod universe;
 
-use std::cell::RefCell;
 use std::rc::Rc;
 
+use futures::lock::Mutex;
 use universe::Settings;
 use universe::Universe;
 use wasm_bindgen::prelude::*;
@@ -30,13 +30,13 @@ pub async fn main() -> Result<(), JsValue> {
     canvas.set_width(canvas.offset_width() as u32);
     canvas.set_height(canvas.offset_height() as u32);
 
-    let universe = Rc::new(RefCell::new(Universe::new(
+    let universe = Rc::new(Mutex::new(Universe::new(
         canvas.width() as f64,
         canvas.height() as f64,
     )));
 
     {
-        let mut universe = (*universe).borrow_mut();
+        let mut universe = universe.lock().await;
         universe.wrap = true;
         universe.seed(9, 400, &Settings::BALANCED).await;
     }
@@ -47,7 +47,7 @@ pub async fn main() -> Result<(), JsValue> {
         let callback = move |ev: KeyboardEvent| {
             let universe = universe.clone();
             spawn_local(async move {
-                let mut universe = (*universe).borrow_mut();
+                let mut universe = universe.lock().await;
                 match ev.key().as_str() {
                     "w" => universe.wrap = !universe.wrap,
                     "b" => universe.seed(9, 400, &Settings::BALANCED).await,
@@ -75,40 +75,54 @@ pub async fn main() -> Result<(), JsValue> {
     {
         let universe = universe.clone();
 
-        let closure: Rc<RefCell<Option<Closure<dyn FnMut() -> Result<(), JsValue>>>>> =
-            Rc::new(RefCell::new(None));
+        let closure: Rc<Mutex<Option<Closure<dyn FnMut()>>>> = Rc::new(Mutex::new(None));
         let clone = closure.clone();
 
-        let callback = move || -> Result<(), JsValue> {
-            let mut universe = (*universe).borrow_mut();
-
-            let ctx: CanvasRenderingContext2d = canvas.get_context("2d")?.unwrap().dyn_into()?;
+        let callback = move || {
+            let ctx: CanvasRenderingContext2d = canvas
+                .get_context("2d")
+                .unwrap()
+                .unwrap()
+                .dyn_into()
+                .unwrap();
             ctx.set_fill_style(&JsValue::from_str("black"));
             ctx.fill_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
 
-            for opacity in 1..10 {
-                universe.step();
-                universe.draw(&ctx, opacity as f64 / 10.0)?;
-            }
+            let universe = universe.clone();
+            let closure = closure.clone();
+            spawn_local(async move {
+                let mut universe = universe.lock().await;
 
-            web_sys::window().unwrap().request_animation_frame(
-                (*closure)
-                    .borrow()
-                    .as_ref()
+                for opacity in 1..10 {
+                    universe.step();
+                    universe.draw(&ctx, opacity as f64 / 10.0).unwrap();
+                }
+
+                web_sys::window()
                     .unwrap()
-                    .as_ref()
-                    .unchecked_ref(),
-            )?;
-
-            Ok(())
+                    .request_animation_frame(
+                        closure
+                            .lock()
+                            .await
+                            .as_ref()
+                            .unwrap()
+                            .as_ref()
+                            .unchecked_ref(),
+                    )
+                    .unwrap();
+            });
         };
 
-        *(*clone).borrow_mut() = Some(Closure::wrap(
-            Box::new(callback) as Box<dyn FnMut() -> Result<(), JsValue>>
-        ));
+        *clone.lock().await = Some(Closure::wrap(Box::new(callback) as Box<dyn FnMut()>));
 
         window.request_animation_frame(
-            (*clone).borrow().as_ref().unwrap().as_ref().unchecked_ref(),
+            clone
+                .lock()
+                .await
+                .as_ref()
+                .unwrap()
+                .as_ref()
+                .unchecked_ref(),
         )?;
     }
 
