@@ -1,32 +1,22 @@
 use std::f64::consts::TAU;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::sync::Mutex;
 
-use futures::future::join_all;
-use futures::Future;
-use futures::FutureExt;
-use js_sys::Promise;
 use rand::rngs::OsRng;
 use rand_distr::Distribution;
 use rand_distr::Normal;
 use rand_distr::Uniform;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use wasm_bindgen_futures::future_to_promise;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::CanvasRenderingContext2d;
 use web_sys::HtmlCanvasElement;
 use web_sys::ImageBitmap;
 
 use crate::particle::Particle;
-use crate::utils::set_panic_hook;
 
 const RADIUS: f64 = 5.0;
 const DIAMETER: f64 = RADIUS * 2.0;
 const R_SMOOTH: f64 = 2.0;
 
-#[wasm_bindgen]
 pub struct Settings {
     pub attract_mean: f64,
     pub attract_std: f64,
@@ -38,23 +28,118 @@ pub struct Settings {
     pub flat_force: bool,
 }
 
-#[wasm_bindgen]
 impl Settings {
-    pub fn balanced() -> Settings {
-        Settings {
-            attract_mean: -0.02,
-            attract_std: 0.06,
-            minr_lower: 0.0,
-            minr_upper: 20.0,
-            maxr_lower: 20.0,
-            maxr_upper: 70.0,
-            friction: 0.05,
-            flat_force: false,
-        }
-    }
+    pub const BALANCED: Settings = Settings {
+        attract_mean: -0.02,
+        attract_std: 0.06,
+        minr_lower: 0.0,
+        minr_upper: 20.0,
+        maxr_lower: 20.0,
+        maxr_upper: 70.0,
+        friction: 0.05,
+        flat_force: false,
+    };
+
+    pub const CHAOS: Settings = Settings {
+        attract_mean: 0.02,
+        attract_std: 0.04,
+        minr_lower: 0.0,
+        minr_upper: 30.0,
+        maxr_lower: 30.0,
+        maxr_upper: 100.0,
+        friction: 0.01,
+        flat_force: false,
+    };
+
+    pub const DIVERSITY: Settings = Settings {
+        attract_mean: -0.01,
+        attract_std: 0.04,
+        minr_lower: 0.0,
+        minr_upper: 20.0,
+        maxr_lower: 10.0,
+        maxr_upper: 60.0,
+        friction: 0.05,
+        flat_force: true,
+    };
+
+    pub const FRICTIONLESS: Settings = Settings {
+        attract_mean: 0.01,
+        attract_std: 0.005,
+        minr_lower: 10.0,
+        minr_upper: 10.0,
+        maxr_lower: 10.0,
+        maxr_upper: 60.0,
+        friction: 0.0,
+        flat_force: true,
+    };
+
+    pub const GLIDERS: Settings = Settings {
+        attract_mean: 0.0,
+        attract_std: 0.06,
+        minr_lower: 0.0,
+        minr_upper: 20.0,
+        maxr_lower: 10.0,
+        maxr_upper: 50.0,
+        friction: 0.01,
+        flat_force: true,
+    };
+
+    pub const HOMOGENEITY: Settings = Settings {
+        attract_mean: 0.0,
+        attract_std: 0.04,
+        minr_lower: 10.0,
+        minr_upper: 10.0,
+        maxr_lower: 10.0,
+        maxr_upper: 80.0,
+        friction: 0.05,
+        flat_force: true,
+    };
+
+    pub const LARGE_CLUSTERS: Settings = Settings {
+        attract_mean: 0.025,
+        attract_std: 0.02,
+        minr_lower: 0.0,
+        minr_upper: 30.0,
+        maxr_lower: 30.0,
+        maxr_upper: 100.0,
+        friction: 0.2,
+        flat_force: false,
+    };
+
+    pub const MEDIUM_CLUSTERS: Settings = Settings {
+        attract_mean: 0.02,
+        attract_std: 0.05,
+        minr_lower: 0.0,
+        minr_upper: 20.0,
+        maxr_lower: 20.0,
+        maxr_upper: 50.0,
+        friction: 0.05,
+        flat_force: false,
+    };
+
+    pub const QUIESCENCE: Settings = Settings {
+        attract_mean: -0.02,
+        attract_std: 0.1,
+        minr_lower: 10.0,
+        minr_upper: 20.0,
+        maxr_lower: 20.0,
+        maxr_upper: 60.0,
+        friction: 0.2,
+        flat_force: false,
+    };
+
+    pub const SMALL_CLUSTERS: Settings = Settings {
+        attract_mean: -0.005,
+        attract_std: 0.01,
+        minr_lower: 10.0,
+        minr_upper: 10.0,
+        maxr_lower: 20.0,
+        maxr_upper: 50.0,
+        friction: 0.01,
+        flat_force: false,
+    };
 }
 
-#[wasm_bindgen]
 pub struct Universe {
     width: f64,
     height: f64,
@@ -63,7 +148,7 @@ pub struct Universe {
     flat_force: bool,
     friction: f64,
 
-    sprites: Arc<Mutex<Vec<ImageBitmap>>>,
+    sprites: Vec<ImageBitmap>,
     attractions: Vec<Vec<f64>>,
     min_radii: Vec<Vec<f64>>,
     max_radii: Vec<Vec<f64>>,
@@ -71,11 +156,8 @@ pub struct Universe {
     particles: Vec<Particle>,
 }
 
-#[wasm_bindgen]
 impl Universe {
     pub fn new(width: f64, height: f64) -> Self {
-        set_panic_hook();
-
         Self {
             width,
             height,
@@ -84,7 +166,7 @@ impl Universe {
             flat_force: false,
             friction: 0.05,
 
-            sprites: Arc::new(Mutex::new(Vec::new())),
+            sprites: Vec::new(),
             attractions: Vec::new(),
             min_radii: Vec::new(),
             max_radii: Vec::new(),
@@ -93,7 +175,7 @@ impl Universe {
         }
     }
 
-    pub fn seed(&mut self, types: usize, particles: usize, settings: &Settings) -> Promise {
+    pub async fn seed(&mut self, types: usize, particles: usize, settings: &Settings) -> () {
         self.friction = settings.friction;
         self.flat_force = settings.flat_force;
 
@@ -122,22 +204,14 @@ impl Universe {
             })
         }
 
-        future_to_promise(
-            self.seed_types(types, settings)
-                .map(|res| res.map(|_| JsValue::UNDEFINED)),
-        )
+        self.seed_types(types, settings).await.unwrap();
     }
 
-    fn seed_types(
-        &mut self,
-        num: usize,
-        settings: &Settings,
-    ) -> Pin<Box<dyn Future<Output = Result<(), JsValue>>>> {
+    async fn seed_types(&mut self, num: usize, settings: &Settings) -> Result<(), JsValue> {
         let attr_dist = Normal::new(settings.attract_mean, settings.attract_std).unwrap();
         let minr_dist = Uniform::new(settings.minr_lower, settings.minr_upper);
         let maxr_dist = Uniform::new(settings.maxr_lower, settings.maxr_upper);
 
-        let mut sprites: Vec<JsFuture> = Vec::with_capacity(num);
         self.attractions = Vec::with_capacity(num);
         self.min_radii = Vec::with_capacity(num);
         self.max_radii = Vec::with_capacity(num);
@@ -172,11 +246,15 @@ impl Universe {
             ctx.ellipse(RADIUS + 1.0, RADIUS + 1.0, RADIUS, RADIUS, 0.0, 0.0, TAU)
                 .unwrap();
             ctx.fill();
-            sprites.push(JsFuture::from(
-                window
-                    .create_image_bitmap_with_html_canvas_element(&canvas)
-                    .unwrap(),
-            ));
+            self.sprites.push(
+                JsFuture::from(
+                    window
+                        .create_image_bitmap_with_html_canvas_element(&canvas)
+                        .unwrap(),
+                )
+                .await?
+                .dyn_into()?,
+            );
             self.attractions.push(Vec::with_capacity(num));
             self.min_radii.push(Vec::with_capacity(num));
             self.max_radii.push(Vec::with_capacity(num));
@@ -206,18 +284,7 @@ impl Universe {
             }
         }
 
-        let self_sprites = self.sprites.clone();
-
-        async move {
-            let sprites = join_all(sprites).await;
-            *self_sprites.lock().unwrap() = sprites
-                .into_iter()
-                .map(|res| res.map(|bitmap| bitmap.dyn_into().unwrap()))
-                .collect::<Result<_, _>>()?;
-
-            Ok(())
-        }
-        .boxed_local()
+        Ok(())
     }
 
     pub fn step(&mut self) {
@@ -325,25 +392,24 @@ impl Universe {
         }
     }
 
-    pub fn draw(&self, ctx: CanvasRenderingContext2d, opacity: f64) -> Result<(), JsValue> {
-        let sprites = self.sprites.lock().unwrap();
+    pub fn draw(&self, ctx: &CanvasRenderingContext2d, opacity: f64) -> Result<(), JsValue> {
         ctx.set_global_alpha(opacity);
         for p in self.particles.iter() {
-            ctx.draw_image_with_image_bitmap(&sprites[p.r#type], p.x, p.y)?;
+            ctx.draw_image_with_image_bitmap(&self.sprites[p.r#type], p.x, p.y)?;
 
             if self.wrap {
                 if p.x > self.width - DIAMETER - 2.0 {
                     if p.y > self.height - DIAMETER - 2.0 {
                         ctx.draw_image_with_image_bitmap(
-                            &sprites[p.r#type],
+                            &self.sprites[p.r#type],
                             p.x - self.width,
                             p.y - self.height,
                         )?;
                     }
-                    ctx.draw_image_with_image_bitmap(&sprites[p.r#type], p.x - self.width, p.y)?;
+                    ctx.draw_image_with_image_bitmap(&self.sprites[p.r#type], p.x - self.width, p.y)?;
                 }
                 if p.y > self.height - DIAMETER - 2.0 {
-                    ctx.draw_image_with_image_bitmap(&sprites[p.r#type], p.x, p.y - self.height)?;
+                    ctx.draw_image_with_image_bitmap(&self.sprites[p.r#type], p.x, p.y - self.height)?;
                 }
             }
         }

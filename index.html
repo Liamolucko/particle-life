@@ -21,7 +21,10 @@
 <body>
   <canvas id="canvas"></canvas>
 
-  <script type="module" src="script.js"></script>
+  <script type="module">
+    import init from "./pkg/particle_life_web.js";
+    init();
+  </script>
 </body>
 
 </html>
