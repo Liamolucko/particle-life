@@ -175,11 +175,27 @@ impl Universe {
         }
     }
 
-    pub async fn seed(&mut self, types: usize, particles: usize, settings: &Settings) -> () {
+    pub async fn seed(
+        &mut self,
+        types: usize,
+        particles: usize,
+        settings: &Settings,
+    ) -> Result<(), JsValue> {
         self.friction = settings.friction;
         self.flat_force = settings.flat_force;
 
-        let type_dist = Uniform::new(0, types);
+        self.seed_types(types, settings).await?;
+        self.randomize_particles_inner(particles);
+
+        Ok(())
+    }
+
+    pub fn randomize_particles(&mut self) {
+        self.randomize_particles_inner(self.particles.len());
+    }
+
+    fn randomize_particles_inner(&mut self, num: usize) {
+        let type_dist = Uniform::new(0, self.sprites.len());
         let (x_dist, y_dist) = if self.wrap {
             (
                 Uniform::new_inclusive(0.0, self.width),
@@ -193,8 +209,8 @@ impl Universe {
         };
         let vel_dist = Normal::new(0.0, 0.2).unwrap();
 
-        self.particles = Vec::with_capacity(particles);
-        for _ in 0..particles {
+        self.particles = Vec::with_capacity(num);
+        for _ in 0..num {
             self.particles.push(Particle {
                 r#type: type_dist.sample(&mut OsRng),
                 x: x_dist.sample(&mut OsRng),
@@ -203,8 +219,6 @@ impl Universe {
                 vy: vel_dist.sample(&mut OsRng),
             })
         }
-
-        self.seed_types(types, settings).await.unwrap();
     }
 
     async fn seed_types(&mut self, num: usize, settings: &Settings) -> Result<(), JsValue> {
@@ -212,6 +226,7 @@ impl Universe {
         let minr_dist = Uniform::new_inclusive(settings.minr_lower, settings.minr_upper);
         let maxr_dist = Uniform::new_inclusive(settings.maxr_lower, settings.maxr_upper);
 
+        self.sprites = Vec::with_capacity(num);
         self.attractions = Vec::with_capacity(num);
         self.min_radii = Vec::with_capacity(num);
         self.max_radii = Vec::with_capacity(num);
@@ -406,10 +421,18 @@ impl Universe {
                             p.y - self.height,
                         )?;
                     }
-                    ctx.draw_image_with_image_bitmap(&self.sprites[p.r#type], p.x - self.width, p.y)?;
+                    ctx.draw_image_with_image_bitmap(
+                        &self.sprites[p.r#type],
+                        p.x - self.width,
+                        p.y,
+                    )?;
                 }
                 if p.y > self.height - DIAMETER - 2.0 {
-                    ctx.draw_image_with_image_bitmap(&self.sprites[p.r#type], p.x, p.y - self.height)?;
+                    ctx.draw_image_with_image_bitmap(
+                        &self.sprites[p.r#type],
+                        p.x,
+                        p.y - self.height,
+                    )?;
                 }
             }
         }
