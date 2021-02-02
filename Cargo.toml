@@ -29,3 +29,12 @@ features = [
   "EventTarget",
   "KeyboardEvent"
 ]
+
+[package.metadata.wasm-pack.profile.profiling]
+# wasm-opt was removing the dwarf debug info despite me explicitly turning it on *facepalm*
+wasm-opt = false
+
+[package.metadata.wasm-pack.profile.profiling.wasm-bindgen]
+debug-js-glue = true
+demangle-name-section = true
+dwarf-debug-info = true
