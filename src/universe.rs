@@ -371,7 +371,7 @@ impl Universe {
 
     pub fn draw(&self, opacity: f32) {
         for p in self.particles.iter() {
-            let mut color = Color {
+            let color = Color {
                 a: opacity,
                 ..self.colors[p.r#type]
             };
