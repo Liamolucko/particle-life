@@ -1,30 +1,30 @@
-use std::f64::consts::TAU;
-
-use rand::rngs::OsRng;
+// macroquad has a `rand` module in it's prelude which conflicts.
+use ::rand::rngs::SmallRng;
+use ::rand::SeedableRng;
+use macroquad::prelude::*;
+use palette::encoding::Linear;
+use palette::encoding::Srgb;
+use palette::rgb::Rgb;
+use palette::Hsv;
+use palette::IntoColor;
 use rand_distr::Distribution;
 use rand_distr::Normal;
 use rand_distr::Uniform;
-use wasm_bindgen::prelude::*;
-use wasm_bindgen::JsCast;
-use wasm_bindgen_futures::JsFuture;
-use web_sys::CanvasRenderingContext2d;
-use web_sys::HtmlCanvasElement;
-use web_sys::ImageBitmap;
 
 use crate::particle::Particle;
 
-const RADIUS: f64 = 5.0;
-const DIAMETER: f64 = RADIUS * 2.0;
-const R_SMOOTH: f64 = 2.0;
+const RADIUS: f32 = 5.0;
+const DIAMETER: f32 = RADIUS * 2.0;
+const R_SMOOTH: f32 = 2.0;
 
 pub struct Settings {
-    pub attract_mean: f64,
-    pub attract_std: f64,
-    pub minr_lower: f64,
-    pub minr_upper: f64,
-    pub maxr_lower: f64,
-    pub maxr_upper: f64,
-    pub friction: f64,
+    pub attract_mean: f32,
+    pub attract_std: f32,
+    pub minr_lower: f32,
+    pub minr_upper: f32,
+    pub maxr_lower: f32,
+    pub maxr_upper: f32,
+    pub friction: f32,
     pub flat_force: bool,
 }
 
@@ -141,23 +141,25 @@ impl Settings {
 }
 
 pub struct Universe {
-    width: f64,
-    height: f64,
+    width: f32,
+    height: f32,
 
     pub wrap: bool,
     flat_force: bool,
-    friction: f64,
+    friction: f32,
 
-    sprites: Vec<ImageBitmap>,
-    attractions: Vec<Vec<f64>>,
-    min_radii: Vec<Vec<f64>>,
-    max_radii: Vec<Vec<f64>>,
+    rng: SmallRng,
+
+    colors: Vec<Color>,
+    attractions: Vec<Vec<f32>>,
+    min_radii: Vec<Vec<f32>>,
+    max_radii: Vec<Vec<f32>>,
 
     particles: Vec<Particle>,
 }
 
 impl Universe {
-    pub fn new(width: f64, height: f64) -> Self {
+    pub fn new(width: f32, height: f32) -> Self {
         Self {
             width,
             height,
@@ -166,7 +168,10 @@ impl Universe {
             flat_force: false,
             friction: 0.05,
 
-            sprites: Vec::new(),
+            // I'm only using the time for random data, so the actual value doesn't matter.
+            rng: SmallRng::seed_from_u64(u64::from_be_bytes(miniquad::date::now().to_be_bytes())),
+
+            colors: Vec::new(),
             attractions: Vec::new(),
             min_radii: Vec::new(),
             max_radii: Vec::new(),
@@ -175,19 +180,12 @@ impl Universe {
         }
     }
 
-    pub async fn seed(
-        &mut self,
-        types: usize,
-        particles: usize,
-        settings: &Settings,
-    ) -> Result<(), JsValue> {
+    pub fn seed(&mut self, types: usize, particles: usize, settings: &Settings) {
         self.friction = settings.friction;
         self.flat_force = settings.flat_force;
 
-        self.seed_types(types, settings).await?;
+        self.seed_types(types, settings);
         self.randomize_particles_inner(particles);
-
-        Ok(())
     }
 
     pub fn randomize_particles(&mut self) {
@@ -195,7 +193,7 @@ impl Universe {
     }
 
     fn randomize_particles_inner(&mut self, num: usize) {
-        let type_dist = Uniform::new(0, self.sprites.len());
+        let type_dist = Uniform::new(0, self.colors.len());
         let (x_dist, y_dist) = if self.wrap {
             (
                 Uniform::new_inclusive(0.0, self.width),
@@ -212,77 +210,43 @@ impl Universe {
         self.particles = Vec::with_capacity(num);
         for _ in 0..num {
             self.particles.push(Particle {
-                r#type: type_dist.sample(&mut OsRng),
-                x: x_dist.sample(&mut OsRng),
-                y: y_dist.sample(&mut OsRng),
-                vx: vel_dist.sample(&mut OsRng),
-                vy: vel_dist.sample(&mut OsRng),
+                r#type: type_dist.sample(&mut self.rng),
+                x: x_dist.sample(&mut self.rng),
+                y: y_dist.sample(&mut self.rng),
+                vx: vel_dist.sample(&mut self.rng),
+                vy: vel_dist.sample(&mut self.rng),
             })
         }
     }
 
-    async fn seed_types(&mut self, num: usize, settings: &Settings) -> Result<(), JsValue> {
+    fn seed_types(&mut self, num: usize, settings: &Settings) {
         let attr_dist = Normal::new(settings.attract_mean, settings.attract_std).unwrap();
         let minr_dist = Uniform::new_inclusive(settings.minr_lower, settings.minr_upper);
         let maxr_dist = Uniform::new_inclusive(settings.maxr_lower, settings.maxr_upper);
 
-        self.sprites = Vec::with_capacity(num);
+        self.colors = Vec::with_capacity(num);
         self.attractions = Vec::with_capacity(num);
         self.min_radii = Vec::with_capacity(num);
         self.max_radii = Vec::with_capacity(num);
 
-        let window = web_sys::window().unwrap();
-        let canvas: HtmlCanvasElement = window
-            .document()
-            .unwrap()
-            .create_element("canvas")
-            .unwrap()
-            .dyn_into()
-            .unwrap();
-        // Make the canvas slightly larger than what we're drawing to prevent weird clipping.
-        canvas.set_width(DIAMETER as u32 + 2);
-        canvas.set_height(DIAMETER as u32 + 2);
-        let ctx: CanvasRenderingContext2d = canvas
-            .get_context("2d")
-            .unwrap()
-            .unwrap()
-            .dyn_into()
-            .unwrap();
-
         for i in 0..num {
-            // Draw the ellipse once now, and then just draw it back onto the canvas every time to save performance.
-            ctx.clear_rect(0.0, 0.0, DIAMETER + 2.0, DIAMETER + 2.0);
-            ctx.set_fill_style(&JsValue::from_str(&format!(
-                "hsl({}, 100%, {}%)",
-                i as f64 / num as f64 * 360.0,
-                (i % 2 + 1) * 25
-            )));
-            ctx.begin_path();
-            ctx.ellipse(RADIUS + 1.0, RADIUS + 1.0, RADIUS, RADIUS, 0.0, 0.0, TAU)
-                .unwrap();
-            ctx.fill();
-            self.sprites.push(
-                JsFuture::from(
-                    window
-                        .create_image_bitmap_with_html_canvas_element(&canvas)
-                        .unwrap(),
-                )
-                .await?
-                .dyn_into()?,
-            );
+            let color: Rgb<Linear<Srgb>> =
+                Hsv::new(i as f32 / num as f32 * 360.0, 1.0, (i % 2 + 1) as f32 / 2.0).into_rgb();
+            self.colors
+                .push(Color::new(color.red, color.green, color.blue, 1.0));
             self.attractions.push(Vec::with_capacity(num));
             self.min_radii.push(Vec::with_capacity(num));
             self.max_radii.push(Vec::with_capacity(num));
             for j in 0..num {
                 self.attractions[i].push(if i == j {
-                    -f64::abs(attr_dist.sample(&mut OsRng))
+                    -f32::abs(attr_dist.sample(&mut self.rng))
                 } else {
-                    attr_dist.sample(&mut OsRng)
+                    attr_dist.sample(&mut self.rng)
                 });
 
                 // Have the type with the lower index choose their shared radii rather than having it be overridden later
                 let min_radius = if i < j {
-                    f64::max(minr_dist.sample(&mut OsRng), DIAMETER)
+                    f32::max(minr_dist.sample(&mut self.rng), DIAMETER)
                 } else if i == j {
                     DIAMETER
                 } else {
@@ -291,15 +255,13 @@ impl Universe {
                 self.min_radii[i].push(min_radius);
 
                 let max_radius = if i <= j {
-                    f64::max(maxr_dist.sample(&mut OsRng), self.min_radii[i][j])
+                    f32::max(maxr_dist.sample(&mut self.rng), self.min_radii[i][j])
                 } else {
                     self.max_radii[j][i]
                 };
                 self.max_radii[i].push(max_radius);
             }
         }
-
-        Ok(())
     }
 
     pub fn step(&mut self) {
@@ -334,7 +296,7 @@ impl Universe {
                     continue;
                 }
 
-                let r = f64::sqrt(r2);
+                let r = f32::sqrt(r2);
                 dx /= r;
                 dy /= r;
 
@@ -342,7 +304,7 @@ impl Universe {
                     if self.flat_force {
                         self.attractions[p.r#type][q.r#type]
                     } else {
-                        let numer = 2.0 * f64::abs(r - 0.5 * (max_r + min_r));
+                        let numer = 2.0 * f32::abs(r - 0.5 * (max_r + min_r));
                         let denom = max_r - min_r;
                         self.attractions[p.r#type][q.r#type] * (1.0 - numer / denom)
                     }
@@ -354,7 +316,7 @@ impl Universe {
                     if self.flat_force {
                         self.attractions[q.r#type][p.r#type]
                     } else {
-                        let numer = 2.0 * f64::abs(r - 0.5 * (max_r + min_r));
+                        let numer = 2.0 * f32::abs(r - 0.5 * (max_r + min_r));
                         let denom = max_r - min_r;
                         self.attractions[q.r#type][p.r#type] * (1.0 - numer / denom)
                     }
@@ -407,35 +369,26 @@ impl Universe {
         }
     }
 
-    pub fn draw(&self, ctx: &CanvasRenderingContext2d, opacity: f64) -> Result<(), JsValue> {
-        ctx.set_global_alpha(opacity);
+    pub fn draw(&self, opacity: f32) {
         for p in self.particles.iter() {
-            ctx.draw_image_with_image_bitmap(&self.sprites[p.r#type], p.x, p.y)?;
+            let mut color = Color {
+                a: opacity,
+                ..self.colors[p.r#type]
+            };
+
+            draw_circle(p.x, p.y, RADIUS, color);
 
             if self.wrap {
                 if p.x > self.width - DIAMETER - 2.0 {
                     if p.y > self.height - DIAMETER - 2.0 {
-                        ctx.draw_image_with_image_bitmap(
-                            &self.sprites[p.r#type],
-                            p.x - self.width,
-                            p.y - self.height,
-                        )?;
+                        draw_circle(p.x - self.width, p.y - self.height, RADIUS, color);
                     }
-                    ctx.draw_image_with_image_bitmap(
-                        &self.sprites[p.r#type],
-                        p.x - self.width,
-                        p.y,
-                    )?;
+                    draw_circle(p.x - self.width, p.y, RADIUS, color);
                 }
                 if p.y > self.height - DIAMETER - 2.0 {
-                    ctx.draw_image_with_image_bitmap(
-                        &self.sprites[p.r#type],
-                        p.x,
-                        p.y - self.height,
-                    )?;
+                    draw_circle(p.x, p.y - self.height, RADIUS, color);
                 }
             }
         }
-        Ok(())
     }
 }
