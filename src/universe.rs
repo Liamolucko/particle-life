@@ -339,31 +339,31 @@ impl Universe {
             p.vy *= 1.0 - self.friction;
 
             if self.wrap {
-                if p.x < 0.0 {
+                if p.x < RADIUS {
                     p.x += self.width;
                 } else if p.x >= self.width {
                     p.x -= self.width;
                 }
-                if p.y < 0.0 {
+                if p.y < RADIUS {
                     p.y += self.height;
                 } else if p.y >= self.height {
                     p.y -= self.height;
                 }
             } else {
-                if p.x <= 0.0 {
+                if p.x <= RADIUS {
                     p.vx *= -1.0;
-                    p.x = 0.0;
-                } else if p.x >= self.width - DIAMETER - 2.0 {
+                    p.x = RADIUS;
+                } else if p.x >= self.width - RADIUS {
                     p.vx *= -1.0;
-                    p.x = self.width - DIAMETER - 2.0;
+                    p.x = self.width - RADIUS;
                 }
 
-                if p.y <= 0.0 {
+                if p.y <= RADIUS {
                     p.vy *= -1.0;
-                    p.y = 0.0;
-                } else if p.y >= self.height - DIAMETER - 2.0 {
+                    p.y = RADIUS;
+                } else if p.y >= self.height - RADIUS {
                     p.vy *= -1.0;
-                    p.y = self.height - DIAMETER - 2.0;
+                    p.y = self.height - RADIUS;
                 }
             }
         }
@@ -379,14 +379,25 @@ impl Universe {
             draw_circle(p.x, p.y, RADIUS, color);
 
             if self.wrap {
-                if p.x > self.width - DIAMETER - 2.0 {
-                    if p.y > self.height - DIAMETER - 2.0 {
+                if p.x > self.width - RADIUS {
+                    if p.y > self.height - RADIUS {
                         draw_circle(p.x - self.width, p.y - self.height, RADIUS, color);
+                    } else if p.y < RADIUS {
+                        draw_circle(p.x - self.width, p.y + self.height, RADIUS, color)
                     }
                     draw_circle(p.x - self.width, p.y, RADIUS, color);
+                } else if p.x < RADIUS {
+                    if p.y > self.height - RADIUS {
+                        draw_circle(p.x + self.width, p.y - self.height, RADIUS, color);
+                    } else if p.y < RADIUS {
+                        draw_circle(p.x + self.width, p.y + self.height, RADIUS, color)
+                    }
+                    draw_circle(p.x + self.width, p.y, RADIUS, color);
                 }
-                if p.y > self.height - DIAMETER - 2.0 {
+                if p.y > self.height - RADIUS {
                     draw_circle(p.x, p.y - self.height, RADIUS, color);
+                } else if p.y < RADIUS {
+                    draw_circle(p.x, p.y + self.height, RADIUS, color)
                 }
             }
         }
