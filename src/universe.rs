@@ -155,7 +155,7 @@ pub struct Universe {
     min_radii: Vec<Vec<f32>>,
     max_radii: Vec<Vec<f32>>,
 
-    particles: Vec<Particle>,
+    pub particles: Vec<Particle>,
 }
 
 impl Universe {
@@ -369,35 +369,57 @@ impl Universe {
         }
     }
 
-    pub fn draw(&self, opacity: f32) {
+    pub fn draw(&self, zoom: f32, target: Vec2, opacity: f32) {
         for p in self.particles.iter() {
             let color = Color {
                 a: opacity,
                 ..self.colors[p.r#type]
             };
 
-            draw_circle(p.x, p.y, RADIUS, color);
+            let mut rel_x = p.x - target.x;
+            let mut rel_y = p.y - target.y;
+
+            // Wrapping render position
+            if self.wrap {
+                if rel_x > self.width / 2.0 {
+                    rel_x -= self.width;
+                } else if rel_x < -self.width / 2.0 {
+                    rel_x += self.width;
+                }
+                if rel_y > self.height / 2.0 {
+                    rel_y -= self.height;
+                } else if rel_y < -self.height / 2.0 {
+                    rel_y += self.height;
+                }
+            }
+
+            let x = rel_x * zoom + self.width / 2.0;
+            let y = rel_y * zoom + self.height / 2.0;
+
+            draw_circle(x, y, RADIUS * zoom, color);
 
             if self.wrap {
+                let zoomed_width = self.width * zoom;
+                let zoomed_height = self.height * zoom;
                 if p.x > self.width - RADIUS {
                     if p.y > self.height - RADIUS {
-                        draw_circle(p.x - self.width, p.y - self.height, RADIUS, color);
+                        draw_circle(x - zoomed_width, y - zoomed_height, RADIUS * zoom, color);
                     } else if p.y < RADIUS {
-                        draw_circle(p.x - self.width, p.y + self.height, RADIUS, color)
+                        draw_circle(x - zoomed_width, y + zoomed_height, RADIUS * zoom, color);
                     }
-                    draw_circle(p.x - self.width, p.y, RADIUS, color);
+                    draw_circle(x - zoomed_width, y, RADIUS * zoom, color);
                 } else if p.x < RADIUS {
                     if p.y > self.height - RADIUS {
-                        draw_circle(p.x + self.width, p.y - self.height, RADIUS, color);
+                        draw_circle(x + zoomed_width, y - zoomed_height, RADIUS * zoom, color);
                     } else if p.y < RADIUS {
-                        draw_circle(p.x + self.width, p.y + self.height, RADIUS, color)
+                        draw_circle(x + zoomed_width, y + zoomed_height, RADIUS * zoom, color);
                     }
-                    draw_circle(p.x + self.width, p.y, RADIUS, color);
+                    draw_circle(x + zoomed_width, y, RADIUS * zoom, color);
                 }
                 if p.y > self.height - RADIUS {
-                    draw_circle(p.x, p.y - self.height, RADIUS, color);
+                    draw_circle(x, y - zoomed_height, RADIUS * zoom, color);
                 } else if p.y < RADIUS {
-                    draw_circle(p.x, p.y + self.height, RADIUS, color)
+                    draw_circle(x, y + zoomed_height, RADIUS * zoom, color);
                 }
             }
         }
@@ -414,5 +436,16 @@ impl Universe {
 
         self.width = width;
         self.height = height;
+    }
+
+    pub fn particle_at(&mut self, pos: Vec2) -> Option<usize> {
+        for (i, p) in self.particles.iter().enumerate() {
+            let dx = p.x - pos.x;
+            let dy = p.y - pos.y;
+            if dx * dx + dy * dy < RADIUS * RADIUS {
+                return Some(i);
+            }
+        }
+        None
     }
 }
