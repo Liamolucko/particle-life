@@ -391,4 +391,17 @@ impl Universe {
             }
         }
     }
+
+    pub fn resize(&mut self, width: f32, height: f32) {
+        let x_mult = width / self.width;
+        let y_mult = height / self.height;
+
+        for p in self.particles.iter_mut() {
+            p.x *= x_mult;
+            p.y *= y_mult;
+        }
+
+        self.width = width;
+        self.height = height;
+    }
 }

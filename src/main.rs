@@ -21,6 +21,9 @@ async fn main() {
     universe.wrap = true;
     universe.seed(9, 400, &Settings::BALANCED);
 
+    let mut prev_width = screen_width();
+    let mut prev_height = screen_height();
+
     loop {
         clear_background(BLACK);
 
@@ -65,6 +68,12 @@ async fn main() {
             universe.randomize_particles();
         }
 
+        if prev_width != screen_width() || prev_height != screen_height() {
+            prev_width = screen_width();
+            prev_height = screen_height();
+            universe.resize(prev_width, prev_height);
+        }
+        
         for opacity in 1..=steps {
             universe.step();
             universe.draw(opacity as f32 / steps as f32);
