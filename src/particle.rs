@@ -1,8 +1,8 @@
 #[derive(Debug)]
 pub struct Particle {
-    pub x: f64,
-    pub y: f64,
-    pub vx: f64,
-    pub vy: f64,
+    pub x: f32,
+    pub y: f32,
+    pub vx: f32,
+    pub vy: f32,
     pub r#type: usize,
 }

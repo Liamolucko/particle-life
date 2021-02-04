@@ -4,37 +4,8 @@ version = "0.1.0"
 authors = ["Liam Murphy <liampm32@gmail.com>"]
 edition = "2018"
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
 [dependencies]
-wasm-bindgen = "0.2"
-rand = { version = "0.8", features = ["getrandom"] }
-getrandom = { version = "0.2", features = ["js"] }
-rand_distr = "0.4"
-wasm-bindgen-futures = "0.4"
-js-sys = "0.3"
-futures = "0.3"
-console_error_panic_hook = { version = "0.1", optional = true }
-
-[dependencies.web-sys]
-version = "0.3"
-features = [
-  "CanvasRenderingContext2d",
-  "HtmlCanvasElement",
-  "Window",
-  "Document",
-  "Element",
-  "ImageBitmap",
-  "EventTarget",
-  "KeyboardEvent"
-]
-
-[package.metadata.wasm-pack.profile.profiling]
-# wasm-opt was removing the dwarf debug info despite me explicitly turning it on *facepalm*
-wasm-opt = false
-
-[package.metadata.wasm-pack.profile.profiling.wasm-bindgen]
-debug-js-glue = true
-demangle-name-section = true
-dwarf-debug-info = true
+rand = { version = "0.8", default-features = false, features = ["small_rng"] }
+rand_distr = { version = "0.4", default-features = false }
+macroquad = "0.3.0-alpha.14"
+palette = { version = "0.5", default-features = false, features = ["std"] }
