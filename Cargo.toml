@@ -1,5 +1,5 @@
 [package]
-name = "particle-life-web"
+name = "particle-life"
 version = "0.1.0"
 authors = ["Liam Murphy <liampm32@gmail.com>"]
 edition = "2018"

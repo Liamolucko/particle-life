@@ -24,7 +24,7 @@ async fn main() {
     let mut zoom = 1.0;
     let mut zoom_dest = zoom;
 
-    let mut cam_pos = vec2(screen_width() / 2.0, screen_height() / 2.0);
+    let mut cam_pos = vec2(screen_width() * 0.5, screen_height() * 0.5);
     let mut cam_dest = cam_pos;
 
     let mut last_scroll_time = 0.0;
@@ -97,14 +97,14 @@ async fn main() {
 
             let time = get_time();
             if time - last_scroll_time > 0.3 {
-                let center = vec2(screen_width(), screen_height()) / 2.0;
+                let center = vec2(screen_width(), screen_height()) * 0.5;
                 cam_dest = cam_pos + (Vec2::from(mouse_position()) - center) / zoom;
             }
             last_scroll_time = time;
         }
 
         if is_mouse_button_pressed(MouseButton::Left) {
-            let center = vec2(screen_width(), screen_height()) / 2.0;
+            let center = vec2(screen_width(), screen_height()) * 0.5;
             cam_dest = cam_pos + (Vec2::from(mouse_position()) - center) / zoom;
 
             tracking = universe.particle_at(cam_dest);

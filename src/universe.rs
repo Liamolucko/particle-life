@@ -231,7 +231,7 @@ impl Universe {
 
         for i in 0..num {
             let color: Rgb<Linear<Srgb>> =
-                Hsv::new(i as f32 / num as f32 * 360.0, 1.0, (i % 2 + 1) as f32 / 2.0).into_rgb();
+                Hsv::new(i as f32 / num as f32 * 360.0, 1.0, (i % 2 + 1) as f32 * 0.5).into_rgb();
             self.colors
                 .push(Color::new(color.red, color.green, color.blue, 1.0));
             self.attractions.push(Vec::with_capacity(num));
@@ -381,44 +381,44 @@ impl Universe {
 
             // Wrapping render position
             if self.wrap {
-                if rel_x > self.width / 2.0 {
+                if rel_x > self.width * 0.5 {
                     rel_x -= self.width;
-                } else if rel_x < -self.width / 2.0 {
+                } else if rel_x < -self.width * 0.5 {
                     rel_x += self.width;
                 }
-                if rel_y > self.height / 2.0 {
+                if rel_y > self.height * 0.5 {
                     rel_y -= self.height;
-                } else if rel_y < -self.height / 2.0 {
+                } else if rel_y < -self.height * 0.5 {
                     rel_y += self.height;
                 }
             }
 
-            let x = rel_x * zoom + self.width / 2.0;
-            let y = rel_y * zoom + self.height / 2.0;
+            let x = rel_x * zoom + self.width * 0.5;
+            let y = rel_y * zoom + self.height * 0.5;
 
             draw_circle(x, y, RADIUS * zoom, color);
 
             if self.wrap {
                 let zoomed_width = self.width * zoom;
                 let zoomed_height = self.height * zoom;
-                if p.x > self.width - RADIUS {
-                    if p.y > self.height - RADIUS {
+                if x > self.width - RADIUS {
+                    if y > self.height - RADIUS {
                         draw_circle(x - zoomed_width, y - zoomed_height, RADIUS * zoom, color);
-                    } else if p.y < RADIUS {
+                    } else if y < RADIUS {
                         draw_circle(x - zoomed_width, y + zoomed_height, RADIUS * zoom, color);
                     }
                     draw_circle(x - zoomed_width, y, RADIUS * zoom, color);
-                } else if p.x < RADIUS {
-                    if p.y > self.height - RADIUS {
+                } else if x < RADIUS {
+                    if y > self.height - RADIUS {
                         draw_circle(x + zoomed_width, y - zoomed_height, RADIUS * zoom, color);
-                    } else if p.y < RADIUS {
+                    } else if y < RADIUS {
                         draw_circle(x + zoomed_width, y + zoomed_height, RADIUS * zoom, color);
                     }
                     draw_circle(x + zoomed_width, y, RADIUS * zoom, color);
                 }
-                if p.y > self.height - RADIUS {
+                if y > self.height - RADIUS {
                     draw_circle(x, y - zoomed_height, RADIUS * zoom, color);
-                } else if p.y < RADIUS {
+                } else if y < RADIUS {
                     draw_circle(x, y + zoomed_height, RADIUS * zoom, color);
                 }
             }
