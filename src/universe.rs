@@ -399,27 +399,25 @@ impl Universe {
             draw_circle(x, y, RADIUS * zoom, color);
 
             if self.wrap {
-                let zoomed_width = self.width * zoom;
-                let zoomed_height = self.height * zoom;
                 if x > self.width - RADIUS {
                     if y > self.height - RADIUS {
-                        draw_circle(x - zoomed_width, y - zoomed_height, RADIUS * zoom, color);
+                        draw_circle(x - self.width, y - self.height, RADIUS * zoom, color);
                     } else if y < RADIUS {
-                        draw_circle(x - zoomed_width, y + zoomed_height, RADIUS * zoom, color);
+                        draw_circle(x - self.width, y + self.height, RADIUS * zoom, color);
                     }
-                    draw_circle(x - zoomed_width, y, RADIUS * zoom, color);
+                    draw_circle(x - self.width, y, RADIUS * zoom, color);
                 } else if x < RADIUS {
                     if y > self.height - RADIUS {
-                        draw_circle(x + zoomed_width, y - zoomed_height, RADIUS * zoom, color);
+                        draw_circle(x + self.width, y - self.height, RADIUS * zoom, color);
                     } else if y < RADIUS {
-                        draw_circle(x + zoomed_width, y + zoomed_height, RADIUS * zoom, color);
+                        draw_circle(x + self.width, y + self.height, RADIUS * zoom, color);
                     }
-                    draw_circle(x + zoomed_width, y, RADIUS * zoom, color);
+                    draw_circle(x + self.width, y, RADIUS * zoom, color);
                 }
                 if y > self.height - RADIUS {
-                    draw_circle(x, y - zoomed_height, RADIUS * zoom, color);
+                    draw_circle(x, y - self.height, RADIUS * zoom, color);
                 } else if y < RADIUS {
-                    draw_circle(x, y + zoomed_height, RADIUS * zoom, color);
+                    draw_circle(x, y + self.height, RADIUS * zoom, color);
                 }
             }
         }
