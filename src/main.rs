@@ -242,7 +242,7 @@ async fn main() {
         let steps = if is_key_down(KeyCode::Space) {
             1
         } else {
-            i32::max(10, (300.0 * get_frame_time()) as i32)
+            i32::min(10, (300.0 * get_frame_time()) as i32)
         };
         for _ in 0..steps {
             universe.step();
