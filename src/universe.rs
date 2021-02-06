@@ -13,9 +13,9 @@ use rand_distr::Uniform;
 
 use crate::particle::Particle;
 
-const RADIUS: f32 = 5.0;
-const DIAMETER: f32 = RADIUS * 2.0;
-const R_SMOOTH: f32 = 2.0;
+pub const RADIUS: f32 = 5.0;
+pub const DIAMETER: f32 = RADIUS * 2.0;
+pub const R_SMOOTH: f32 = 2.0;
 
 pub struct Settings {
     pub attract_mean: f32,
@@ -141,8 +141,8 @@ impl Settings {
 }
 
 pub struct Universe {
-    width: f32,
-    height: f32,
+    pub width: f32,
+    pub height: f32,
 
     pub wrap: bool,
     flat_force: bool,
@@ -150,7 +150,7 @@ pub struct Universe {
 
     rng: SmallRng,
 
-    colors: Vec<Color>,
+    pub colors: Vec<Color>,
     attractions: Vec<Vec<f32>>,
     min_radii: Vec<Vec<f32>>,
     max_radii: Vec<Vec<f32>>,
@@ -207,7 +207,8 @@ impl Universe {
         };
         let vel_dist = Normal::new(0.0, 0.2).unwrap();
 
-        self.particles = Vec::with_capacity(num);
+        self.particles.clear();
+        self.particles.reserve(num);
         for _ in 0..num {
             self.particles.push(Particle {
                 r#type: type_dist.sample(&mut self.rng),
@@ -224,10 +225,14 @@ impl Universe {
         let minr_dist = Uniform::new_inclusive(settings.minr_lower, settings.minr_upper);
         let maxr_dist = Uniform::new_inclusive(settings.maxr_lower, settings.maxr_upper);
 
-        self.colors = Vec::with_capacity(num);
-        self.attractions = Vec::with_capacity(num);
-        self.min_radii = Vec::with_capacity(num);
-        self.max_radii = Vec::with_capacity(num);
+        self.colors.clear();
+        self.colors.reserve(num);
+        self.attractions.clear();
+        self.attractions.reserve(num);
+        self.min_radii.clear();
+        self.min_radii.reserve(num);
+        self.max_radii.clear();
+        self.max_radii.reserve(num);
 
         for i in 0..num {
             let color: Rgb<Linear<Srgb>> =
@@ -364,60 +369,6 @@ impl Universe {
                 } else if p.y >= self.height - RADIUS {
                     p.vy *= -1.0;
                     p.y = self.height - RADIUS;
-                }
-            }
-        }
-    }
-
-    pub fn draw(&self, zoom: f32, target: Vec2, opacity: f32) {
-        for p in self.particles.iter() {
-            let color = Color {
-                a: opacity,
-                ..self.colors[p.r#type]
-            };
-
-            let mut rel_x = p.x - target.x;
-            let mut rel_y = p.y - target.y;
-
-            // Wrapping render position
-            if self.wrap {
-                if rel_x > self.width * 0.5 {
-                    rel_x -= self.width;
-                } else if rel_x < -self.width * 0.5 {
-                    rel_x += self.width;
-                }
-                if rel_y > self.height * 0.5 {
-                    rel_y -= self.height;
-                } else if rel_y < -self.height * 0.5 {
-                    rel_y += self.height;
-                }
-            }
-
-            let x = rel_x * zoom + self.width * 0.5;
-            let y = rel_y * zoom + self.height * 0.5;
-
-            draw_circle(x, y, RADIUS * zoom, color);
-
-            if self.wrap {
-                if x > self.width - RADIUS {
-                    if y > self.height - RADIUS {
-                        draw_circle(x - self.width, y - self.height, RADIUS * zoom, color);
-                    } else if y < RADIUS {
-                        draw_circle(x - self.width, y + self.height, RADIUS * zoom, color);
-                    }
-                    draw_circle(x - self.width, y, RADIUS * zoom, color);
-                } else if x < RADIUS {
-                    if y > self.height - RADIUS {
-                        draw_circle(x + self.width, y - self.height, RADIUS * zoom, color);
-                    } else if y < RADIUS {
-                        draw_circle(x + self.width, y + self.height, RADIUS * zoom, color);
-                    }
-                    draw_circle(x + self.width, y, RADIUS * zoom, color);
-                }
-                if y > self.height - RADIUS {
-                    draw_circle(x, y - self.height, RADIUS * zoom, color);
-                } else if y < RADIUS {
-                    draw_circle(x, y + self.height, RADIUS * zoom, color);
                 }
             }
         }
