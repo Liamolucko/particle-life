@@ -57,27 +57,25 @@ fn draw(
         draw_circle(x, y, RADIUS * zoom, color);
 
         if wrap {
-            let zoomed_width = width * zoom;
-            let zoomed_height = height * zoom;
-            if x > width - RADIUS {
-                if y > height - RADIUS {
-                    draw_circle(x - zoomed_width, y - zoomed_height, RADIUS * zoom, color);
-                } else if y < RADIUS {
-                    draw_circle(x - zoomed_width, y + zoomed_height, RADIUS * zoom, color);
+            if rel_x > width * 0.5 - RADIUS && x < width + RADIUS {
+                if rel_y > height * 0.5 - RADIUS && y < height + RADIUS {
+                    draw_circle(x - width, y - height, RADIUS * zoom, color);
+                } else if rel_y < height * -0.5 + RADIUS && y > -RADIUS {
+                    draw_circle(x - width, y + height, RADIUS * zoom, color);
                 }
-                draw_circle(x - zoomed_width, y, RADIUS * zoom, color);
-            } else if x < RADIUS {
-                if y > height - RADIUS {
-                    draw_circle(x + zoomed_width, y - zoomed_height, RADIUS * zoom, color);
-                } else if y < RADIUS {
-                    draw_circle(x + zoomed_width, y + zoomed_height, RADIUS * zoom, color);
+                draw_circle(x - width, y, RADIUS * zoom, color);
+            } else if rel_x < width * -0.5 + RADIUS && x > -RADIUS {
+                if rel_y > height * 0.5 - RADIUS && y < height + RADIUS {
+                    draw_circle(x + width, y - height, RADIUS * zoom, color);
+                } else if rel_y < height * -0.5 + RADIUS && y > -RADIUS {
+                    draw_circle(x + width, y + height, RADIUS * zoom, color);
                 }
-                draw_circle(x + zoomed_width, y, RADIUS * zoom, color);
+                draw_circle(x + width, y, RADIUS * zoom, color);
             }
-            if y > height - RADIUS {
-                draw_circle(x, y - zoomed_height, RADIUS * zoom, color);
-            } else if y < RADIUS {
-                draw_circle(x, y + zoomed_height, RADIUS * zoom, color);
+            if rel_y > height * 0.5 - RADIUS && y < height + RADIUS {
+                draw_circle(x, y - height, RADIUS * zoom, color);
+            } else if rel_y < height * -0.5 + RADIUS && y > -RADIUS {
+                draw_circle(x, y + height, RADIUS * zoom, color);
             }
         }
     }
