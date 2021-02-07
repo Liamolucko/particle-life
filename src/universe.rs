@@ -1,12 +1,13 @@
-// macroquad has a `rand` module in it's prelude which conflicts.
-use ::rand::rngs::SmallRng;
-use ::rand::SeedableRng;
-use macroquad::prelude::*;
+use std::cmp::Ordering;
+
 use palette::encoding::Linear;
 use palette::encoding::Srgb;
 use palette::rgb::Rgb;
 use palette::Hsv;
 use palette::IntoColor;
+use quicksilver::geom::Vector;
+use quicksilver::graphics::Color;
+use rand::rngs::OsRng;
 use rand_distr::Distribution;
 use rand_distr::Normal;
 use rand_distr::Uniform;
@@ -141,14 +142,11 @@ impl Settings {
 }
 
 pub struct Universe {
-    pub width: f32,
-    pub height: f32,
+    pub size: Vector,
 
     pub wrap: bool,
     flat_force: bool,
     friction: f32,
-
-    rng: SmallRng,
 
     pub colors: Vec<Color>,
     attractions: Vec<Vec<f32>>,
@@ -159,17 +157,13 @@ pub struct Universe {
 }
 
 impl Universe {
-    pub fn new(width: f32, height: f32) -> Self {
+    pub fn new(size: Vector) -> Self {
         Self {
-            width,
-            height,
+            size,
 
             wrap: false,
             flat_force: false,
             friction: 0.05,
-
-            // I'm only using the time for random data, so the actual value doesn't matter.
-            rng: SmallRng::seed_from_u64(u64::from_be_bytes(miniquad::date::now().to_be_bytes())),
 
             colors: Vec::new(),
             attractions: Vec::new(),
@@ -196,13 +190,13 @@ impl Universe {
         let type_dist = Uniform::new(0, self.colors.len());
         let (x_dist, y_dist) = if self.wrap {
             (
-                Uniform::new_inclusive(0.0, self.width),
-                Uniform::new_inclusive(0.0, self.height),
+                Uniform::new_inclusive(0.0, self.size.x),
+                Uniform::new_inclusive(0.0, self.size.y),
             )
         } else {
             (
-                Uniform::new_inclusive(self.width * 0.25, self.width * 0.75),
-                Uniform::new_inclusive(self.height * 0.25, self.height * 0.75),
+                Uniform::new_inclusive(self.size.x * 0.25, self.size.x * 0.75),
+                Uniform::new_inclusive(self.size.y * 0.25, self.size.y * 0.75),
             )
         };
         let vel_dist = Normal::new(0.0, 0.2).unwrap();
@@ -211,11 +205,15 @@ impl Universe {
         self.particles.reserve(num);
         for _ in 0..num {
             self.particles.push(Particle {
-                r#type: type_dist.sample(&mut self.rng),
-                x: x_dist.sample(&mut self.rng),
-                y: y_dist.sample(&mut self.rng),
-                vx: vel_dist.sample(&mut self.rng),
-                vy: vel_dist.sample(&mut self.rng),
+                r#type: type_dist.sample(&mut OsRng),
+                pos: Vector {
+                    x: x_dist.sample(&mut OsRng),
+                    y: y_dist.sample(&mut OsRng),
+                },
+                vel: Vector {
+                    x: vel_dist.sample(&mut OsRng),
+                    y: vel_dist.sample(&mut OsRng),
+                },
             })
         }
     }
@@ -237,30 +235,32 @@ impl Universe {
         for i in 0..num {
             let color: Rgb<Linear<Srgb>> =
                 Hsv::new(i as f32 / num as f32 * 360.0, 1.0, (i % 2 + 1) as f32 * 0.5).into_rgb();
-            self.colors
-                .push(Color::new(color.red, color.green, color.blue, 1.0));
+            self.colors.push(Color {
+                r: color.red,
+                g: color.green,
+                b: color.blue,
+                a: 1.0,
+            });
             self.attractions.push(Vec::with_capacity(num));
             self.min_radii.push(Vec::with_capacity(num));
             self.max_radii.push(Vec::with_capacity(num));
             for j in 0..num {
                 self.attractions[i].push(if i == j {
-                    -f32::abs(attr_dist.sample(&mut self.rng))
+                    -f32::abs(attr_dist.sample(&mut OsRng))
                 } else {
-                    attr_dist.sample(&mut self.rng)
+                    attr_dist.sample(&mut OsRng)
                 });
 
                 // Have the type with the lower index choose their shared radii rather than having it be overridden later
-                let min_radius = if i < j {
-                    f32::max(minr_dist.sample(&mut self.rng), DIAMETER)
-                } else if i == j {
-                    DIAMETER
-                } else {
-                    self.min_radii[j][i]
+                let min_radius = match i.cmp(&j) {
+                    Ordering::Greater => self.min_radii[j][i],
+                    Ordering::Equal => DIAMETER,
+                    Ordering::Less => f32::max(minr_dist.sample(&mut OsRng), DIAMETER),
                 };
                 self.min_radii[i].push(min_radius);
 
                 let max_radius = if i <= j {
-                    f32::max(maxr_dist.sample(&mut self.rng), self.min_radii[i][j])
+                    f32::max(maxr_dist.sample(&mut OsRng), self.min_radii[i][j])
                 } else {
                     self.max_radii[j][i]
                 };
@@ -270,6 +270,9 @@ impl Universe {
     }
 
     pub fn step(&mut self) {
+        // rust-analyzer couldn't figure out it's type (same for all the other times)
+        let center: Vector = self.size * 0.5;
+
         for i in 0..self.particles.len() {
             // Only iterate over all the particles after i, and then calculate new velocities to both.
             // This is more efficient because one of the most expensive calculations is the distance calculation,
@@ -278,32 +281,31 @@ impl Universe {
                 let p = &self.particles[i];
                 let q = &self.particles[j];
 
-                let mut dx = q.x - p.x;
-                let mut dy = q.y - p.y;
+                let mut delta: Vector = q.pos - p.pos;
                 if self.wrap {
-                    if dx > self.width * 0.5 {
-                        dx -= self.width;
-                    } else if dx < -self.width * 0.5 {
-                        dx += self.width;
+                    if delta.x > center.x {
+                        delta.x -= self.size.x;
+                    } else if delta.x < -center.x {
+                        delta.x += self.size.x;
                     }
-                    if dy > self.width * 0.5 {
-                        dy -= self.height;
-                    } else if dy < -self.height * 0.5 {
-                        dy += self.height
+                    if delta.y > center.y {
+                        delta.y -= self.size.y;
+                    } else if delta.y < -center.y {
+                        delta.y += self.size.y
                     }
                 }
 
-                let r2 = dx * dx + dy * dy;
-                let min_r = self.min_radii[p.r#type][q.r#type];
+                let r2 = delta.len2();
                 let max_r = self.max_radii[p.r#type][q.r#type];
 
-                if r2 > max_r * max_r || r2 < 0.01 {
+                if r2 < 0.01 || r2 > max_r * max_r {
                     continue;
                 }
 
+                let min_r = self.min_radii[p.r#type][q.r#type];
+
                 let r = f32::sqrt(r2);
-                dx /= r;
-                dy /= r;
+                delta /= r;
 
                 let f1 = if r > min_r {
                     if self.flat_force {
@@ -329,69 +331,63 @@ impl Universe {
                     R_SMOOTH * min_r * (1.0 / (min_r + R_SMOOTH) - 1.0 / (r + R_SMOOTH))
                 };
 
-                self.particles[i].vx += f1 * dx;
-                self.particles[i].vy += f1 * dy;
+                self.particles[i].vel += delta * f1;
 
-                self.particles[j].vx += f2 * -dx;
-                self.particles[j].vy += f2 * -dy;
+                self.particles[j].vel += -delta * f2;
             }
         }
 
         for p in self.particles.iter_mut() {
-            p.x += p.vx;
-            p.y += p.vy;
-            p.vx *= 1.0 - self.friction;
-            p.vy *= 1.0 - self.friction;
+            p.pos += p.vel;
+            p.vel *= 1.0 - self.friction;
 
             if self.wrap {
-                if p.x < RADIUS {
-                    p.x += self.width;
-                } else if p.x >= self.width {
-                    p.x -= self.width;
+                if p.pos.x < RADIUS {
+                    p.pos.x += self.size.x;
+                } else if p.pos.x >= self.size.x {
+                    p.pos.x -= self.size.x;
                 }
-                if p.y < RADIUS {
-                    p.y += self.height;
-                } else if p.y >= self.height {
-                    p.y -= self.height;
+                if p.pos.y < RADIUS {
+                    p.pos.y += self.size.y;
+                } else if p.pos.y >= self.size.y {
+                    p.pos.y -= self.size.y;
                 }
             } else {
-                if p.x <= RADIUS {
-                    p.vx *= -1.0;
-                    p.x = RADIUS;
-                } else if p.x >= self.width - RADIUS {
-                    p.vx *= -1.0;
-                    p.x = self.width - RADIUS;
+                if p.pos.x <= RADIUS {
+                    p.vel.x *= -1.0;
+                    p.pos.x = RADIUS;
+                } else if p.pos.x >= self.size.x - RADIUS {
+                    p.vel.x *= -1.0;
+                    p.pos.x = self.size.x - RADIUS;
                 }
 
-                if p.y <= RADIUS {
-                    p.vy *= -1.0;
-                    p.y = RADIUS;
-                } else if p.y >= self.height - RADIUS {
-                    p.vy *= -1.0;
-                    p.y = self.height - RADIUS;
+                if p.pos.y <= RADIUS {
+                    p.vel.y *= -1.0;
+                    p.pos.y = RADIUS;
+                } else if p.pos.y >= self.size.y - RADIUS {
+                    p.vel.y *= -1.0;
+                    p.pos.y = self.size.y - RADIUS;
                 }
             }
         }
     }
 
-    pub fn resize(&mut self, width: f32, height: f32) {
-        let x_mult = width / self.width;
-        let y_mult = height / self.height;
+    pub fn resize(&mut self, size: Vector) {
+        let x_mult = size.x / self.size.x;
+        let y_mult = size.y / self.size.y;
 
         for p in self.particles.iter_mut() {
-            p.x *= x_mult;
-            p.y *= y_mult;
+            p.pos.x *= x_mult;
+            p.pos.y *= y_mult;
         }
 
-        self.width = width;
-        self.height = height;
+        self.size = size;
     }
 
-    pub fn particle_at(&mut self, pos: Vec2) -> Option<usize> {
+    pub fn particle_at(&mut self, pos: Vector) -> Option<usize> {
         for (i, p) in self.particles.iter().enumerate() {
-            let dx = p.x - pos.x;
-            let dy = p.y - pos.y;
-            if dx * dx + dy * dy < RADIUS * RADIUS {
+            let delta: Vector = p.pos - pos;
+            if delta.len2() < RADIUS * RADIUS {
                 return Some(i);
             }
         }
