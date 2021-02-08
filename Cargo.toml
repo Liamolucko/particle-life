@@ -5,7 +5,28 @@ authors = ["Liam Murphy <liampm32@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-rand = { version = "0.8", default-features = false, features = ["small_rng"] }
+getrandom = { version = "0.2", features = ["js"] }
+palette = { version = "0.5" }
+rand = { version = "0.8", features = ["getrandom"] }
 rand_distr = { version = "0.4", default-features = false }
-macroquad = "0.3.0-alpha.14"
-palette = { version = "0.5", default-features = false, features = ["std"] }
+
+[dependencies.quicksilver]
+git = "https://github.com/Liamolucko/quicksilver.git"
+branch = "inline"
+default-features = false
+features = ["event-cache", "web-sys"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["Document", "Element"] }
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[package.metadata.wasm-pack.profile.profiling]
+wasm-opt = false
+
+[package.metadata.wasm-pack.profile.profiling.wasm-bindgen]
+debug-js-glue = true
+demangle-name-section = true
+dwarf-debug-info = true
