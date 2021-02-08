@@ -235,8 +235,32 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
 
     gfx.set_resize_handler(ResizeHandler::Stretch);
 
+    #[cfg(target_arch = "wasm32")]
+    let root_element = web_sys::window()
+        .unwrap()
+        .document()
+        .unwrap()
+        .document_element()
+        .unwrap();
+
     loop {
         gfx.clear(Color::BLACK);
+
+        // winit doesn't currently trigger resize events on the web, so we have to do it this way
+        #[cfg(target_arch = "wasm32")]
+        if window.size().x as i32 != root_element.client_width()
+            || window.size().y as i32 != root_element.client_height()
+        {
+            let win_size = Vector {
+                x: root_element.client_width() as f32,
+                y: root_element.client_height() as f32,
+            };
+
+            window.set_size(win_size);
+
+            gfx.set_camera_size(win_size);
+            universe.resize(win_size);
+        }
 
         while let Some(ev) = input.next_event().await {
             match ev {
