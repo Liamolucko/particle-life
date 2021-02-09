@@ -9,6 +9,7 @@ getrandom = { version = "0.2", features = ["js"] }
 palette = { version = "0.5" }
 rand = { version = "0.8", features = ["getrandom"] }
 rand_distr = { version = "0.4", default-features = false }
+instant = { version = "0.1", features = ["wasm-bindgen"] }
 
 [dependencies.quicksilver]
 git = "https://github.com/Liamolucko/quicksilver.git"

@@ -5,8 +5,11 @@ use palette::encoding::Srgb;
 use palette::rgb::Rgb;
 use palette::Hsv;
 use palette::IntoColor;
+use quicksilver::geom::Circle;
+use quicksilver::geom::Shape;
 use quicksilver::geom::Vector;
 use quicksilver::graphics::Color;
+use quicksilver::Graphics;
 use rand::rngs::OsRng;
 use rand_distr::Distribution;
 use rand_distr::Normal;
@@ -269,7 +272,7 @@ impl Universe {
         }
     }
 
-    pub fn step(&mut self) {
+    pub fn step(&mut self, dt: f32) {
         // rust-analyzer couldn't figure out it's type (same for all the other times)
         let center: Vector = self.size * 0.5;
 
@@ -331,15 +334,15 @@ impl Universe {
                     R_SMOOTH * min_r * (1.0 / (min_r + R_SMOOTH) - 1.0 / (r + R_SMOOTH))
                 };
 
-                self.particles[i].vel += delta * f1;
+                self.particles[i].vel += delta * f1 * dt;
 
-                self.particles[j].vel += -delta * f2;
+                self.particles[j].vel += -delta * f2 * dt;
             }
         }
 
         for p in self.particles.iter_mut() {
-            p.pos += p.vel;
-            p.vel *= 1.0 - self.friction;
+            p.pos += p.vel * dt;
+            p.vel *= f32::powf(1.0 - self.friction, dt);
 
             if self.wrap {
                 if p.pos.x < RADIUS {
@@ -372,6 +375,85 @@ impl Universe {
         }
     }
 
+    pub fn draw(&self, gfx: &mut Graphics, target: Vector, zoom: f32) {
+        let center: Vector = self.size * 0.5;
+
+        for p in self.particles.iter() {
+            let mut color = self.colors[p.r#type];
+
+            let mut rel: Vector = p.pos - target;
+
+            for _ in 0..10 {
+                // Wrapping render position
+                if self.wrap {
+                    if rel.x > center.x {
+                        rel.x -= self.size.x;
+                    } else if rel.x < -center.x {
+                        rel.x += self.size.x;
+                    }
+                    if rel.y > center.y {
+                        rel.y -= self.size.y;
+                    } else if rel.y < -center.y {
+                        rel.y += self.size.y;
+                    }
+                }
+
+                let pos = rel * zoom + center;
+
+                if pos.x - RADIUS * zoom < self.size.x
+                    && pos.x + RADIUS * zoom > 0.0
+                    && pos.y - RADIUS * zoom < self.size.y
+                    && pos.y + RADIUS * zoom > 0.0
+                {
+                    let mut circle = Circle::new(pos, RADIUS * zoom);
+
+                    gfx.fill_polygon(&circle_points(&circle), color);
+
+                    let mut y_wrapped = false;
+                    if self.wrap {
+                        if rel.y > center.y - RADIUS && pos.y < self.size.y + RADIUS {
+                            circle.pos.y -= self.size.y;
+
+                            gfx.fill_polygon(&circle_points(&circle), color);
+
+                            y_wrapped = true;
+                        } else if rel.y < -center.y + RADIUS && pos.y > -RADIUS {
+                            circle.pos.y += self.size.y;
+
+                            gfx.fill_polygon(&circle_points(&circle), color);
+
+                            y_wrapped = true;
+                        }
+
+                        if rel.x > center.x - RADIUS && pos.x < self.size.x + RADIUS {
+                            circle.pos.x -= self.size.x;
+
+                            gfx.fill_polygon(&circle_points(&circle), color);
+
+                            if y_wrapped {
+                                circle.pos.y = pos.y;
+
+                                gfx.fill_polygon(&circle_points(&circle), color);
+                            }
+                        } else if rel.x < -center.x + RADIUS && pos.x > -RADIUS {
+                            circle.pos.x += self.size.x;
+
+                            gfx.fill_polygon(&circle_points(&circle), color);
+
+                            if y_wrapped {
+                                circle.pos.y = pos.y;
+
+                                gfx.fill_polygon(&circle_points(&circle), color);
+                            }
+                        }
+                    }
+                }
+                rel -= p.vel;
+                color.a -= 0.1;
+            }
+        }
+    }
+
     pub fn resize(&mut self, size: Vector) {
         let x_mult = size.x / self.size.x;
         let y_mult = size.y / self.size.y;
@@ -393,4 +475,89 @@ impl Universe {
         }
         None
     }
+}
+
+const CIRCLE_POINTS: [Vector; 20] = [
+    Vector { x: 1.0, y: 0.0 },
+    Vector {
+        x: 0.945_817_23,
+        y: 0.324_699_46,
+    },
+    Vector {
+        x: 0.789_140_5,
+        y: 0.614_212_7,
+    },
+    Vector {
+        x: 0.546_948_13,
+        y: 0.837_166_5,
+    },
+    Vector {
+        x: 0.245_485_48,
+        y: 0.969_400_3,
+    },
+    Vector {
+        x: -0.082_579_345,
+        y: 0.996_584_5,
+    },
+    Vector {
+        x: -0.401_695_43,
+        y: 0.915_773_33,
+    },
+    Vector {
+        x: -0.677_281_56,
+        y: 0.735_723_9,
+    },
+    Vector {
+        x: -0.879_473_75,
+        y: 0.475_947_38,
+    },
+    Vector {
+        x: -0.986_361_3,
+        y: 0.164_594_59,
+    },
+    Vector {
+        x: -0.986_361_3,
+        y: -0.164_594_59,
+    },
+    Vector {
+        x: -0.879_473_75,
+        y: -0.475_947_38,
+    },
+    Vector {
+        x: -0.677_281_56,
+        y: -0.735_723_9,
+    },
+    Vector {
+        x: -0.401_695_43,
+        y: -0.915_773_33,
+    },
+    Vector {
+        x: -0.082_579_345,
+        y: -0.996_584_5,
+    },
+    Vector {
+        x: 0.245_485_48,
+        y: -0.969_400_3,
+    },
+    Vector {
+        x: 0.546_948_13,
+        y: -0.837_166_5,
+    },
+    Vector {
+        x: 0.789_140_5,
+        y: -0.614_212_7,
+    },
+    Vector {
+        x: 0.945_817_23,
+        y: -0.324_699_46,
+    },
+    Vector { x: 1.0, y: 0.0 },
+];
+
+fn circle_points(circle: &Circle) -> [Vector; 20] {
+    let mut points = CIRCLE_POINTS;
+    for point in points.iter_mut() {
+        *point = circle.center() + (*point * circle.radius);
+    }
+    points
 }
