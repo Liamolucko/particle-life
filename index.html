@@ -22,9 +22,11 @@
 </head>
 
 <body>
-  <script type="module">
-    import init from "./pkg/particle_life.js";
-    init();
+  <script src="./pkg/particle_life.js"></script>
+  <script>
+    wasm_bindgen("./pkg/particle_life_bg.wasm").then(() => {
+      wasm_bindgen.run();
+    });
   </script>
 </body>
 
