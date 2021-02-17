@@ -1,22 +1,18 @@
 #[cfg(target_arch = "wasm32")]
 use std::cell::RefCell;
+#[cfg(target_arch = "wasm32")]
+use std::collections::VecDeque;
 use std::pin::Pin;
 #[cfg(target_arch = "wasm32")]
 use std::rc::Rc;
 use std::task::Context;
 use std::task::Poll;
-#[cfg(not(target_arch = "wasm32"))]
-use std::thread;
 
-#[cfg(not(target_arch = "wasm32"))]
-use futures::stream::FusedStream;
-#[cfg(not(target_arch = "wasm32"))]
-use futures::FutureExt;
-#[cfg(not(target_arch = "wasm32"))]
-use futures::SinkExt;
 use futures::Stream;
 #[cfg(not(target_arch = "wasm32"))]
-use futures::StreamExt;
+use futures::{stream::FusedStream, FutureExt, SinkExt, StreamExt};
+#[cfg(target_arch = "wasm32")]
+use js_sys::Uint8Array;
 use quicksilver::geom::Vector;
 use serde::{Deserialize, Serialize};
 #[cfg(target_arch = "wasm32")]
@@ -24,15 +20,10 @@ use wasm_bindgen::prelude::*;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast;
 #[cfg(target_arch = "wasm32")]
-use web_sys::AddEventListenerOptions;
-use web_sys::MessageEvent;
-#[cfg(target_arch = "wasm32")]
-use web_sys::Worker;
+use web_sys::{AddEventListenerOptions, MessageEvent, Worker};
 
 use crate::particle::Particle;
 use crate::universe::Settings;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::universe::Universe;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub struct StepChannel {
@@ -45,7 +36,7 @@ pub struct StepChannel {
 
 #[cfg(target_arch = "wasm32")]
 pub struct StepChannel {
-    buf: Rc<RefCell<Vec<(u32, Vec<Particle>)>>>,
+    buf: Rc<RefCell<VecDeque<(u32, Vec<Particle>)>>>,
     worker: Worker,
     round: u32,
     // Queue up initial messages until the worker communicates that it's ready to start recieving. Replaced with `None` once it is.
@@ -71,8 +62,10 @@ impl StepChannel {
         // Channel which sends messages from main thread to worker thread
         let (cmd_tx, mut cmd_rx) = mpsc::channel(10);
 
-        thread::spawn(move || {
+        std::thread::spawn(move || {
             futures::executor::block_on(async {
+                use crate::universe::Universe;
+
                 let mut universe = Universe::new(size);
                 let mut round = 0;
 
@@ -95,6 +88,9 @@ impl StepChannel {
                                         universe.randomize_particles();
                                         round += 1;
                                     },
+                                    Command::Step => {
+                                        // This one is only used for wasm mode - native mode's stepping is automatically limited by the channel buffer.
+                                    }
                                 }
                             }
                         }.fuse() => {},
@@ -118,7 +114,7 @@ impl StepChannel {
     pub fn new(size: Vector) -> Self {
         let worker = Worker::new("./worker.js").unwrap();
 
-        let buf = Rc::new(RefCell::new(Vec::with_capacity(10)));
+        let buf = Rc::new(RefCell::new(VecDeque::with_capacity(10)));
         let tx_buf = Rc::new(RefCell::new(Some(vec![Command::Resize(size)])));
 
         let chan = Self {
@@ -129,8 +125,9 @@ impl StepChannel {
         };
 
         let closure = Closure::wrap(Box::new(move |msg: MessageEvent| {
-            if let Ok(msg) = msg.data().into_serde() {
-                buf.borrow_mut().push(msg);
+            if let Ok(slice) = msg.data().dyn_into::<Uint8Array>() {
+                buf.borrow_mut()
+                    .push_back(serde_cbor::from_slice(&slice.to_vec()).unwrap());
             } else {
                 for msg in tx_buf.borrow_mut().take().unwrap() {
                     worker
@@ -212,7 +209,7 @@ impl Stream for StepChannel {
 
     #[cfg(target_arch = "wasm32")]
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        let el = self.buf.borrow_mut().pop();
+        let el = self.buf.borrow_mut().pop_front();
         match el {
             Some((round, v)) => {
                 self.worker
@@ -226,7 +223,10 @@ impl Stream for StepChannel {
             }
             None => {
                 let waker = cx.waker().clone();
-                let closure = Closure::once(Box::new(move || waker.wake()));
+                let closure = Closure::once(Box::new(move |ev: MessageEvent| {
+                    ev.prevent_default();
+                    waker.wake()
+                }));
                 self.worker
                     .add_event_listener_with_callback_and_add_event_listener_options(
                         "message",

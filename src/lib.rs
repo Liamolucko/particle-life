@@ -29,13 +29,9 @@ use quicksilver::Result;
 use quicksilver::Timer;
 use quicksilver::Window;
 use universe::Settings;
-use universe::Universe;
 use universe::RADIUS;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
-use wasm_bindgen::JsCast;
-use web_sys::DedicatedWorkerGlobalScope;
-use web_sys::MessageEvent;
 
 const CIRCLE_POINTS: [Vector; 20] = [
     Vector { x: 1.0, y: 0.0 },
@@ -255,6 +251,12 @@ pub fn run() {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn run_worker() {
+    use js_sys::Uint8Array;
+    use universe::Universe;
+    use wasm_bindgen::JsCast;
+    use web_sys::DedicatedWorkerGlobalScope;
+    use web_sys::MessageEvent;
+
     console_error_panic_hook::set_once();
 
     let global: DedicatedWorkerGlobalScope = js_sys::global().dyn_into().unwrap();
@@ -281,9 +283,11 @@ pub fn run_worker() {
             Command::Step => {
                 universe.step();
                 global
-                    .post_message(
-                        &JsValue::from_serde(&(round, universe.particles.clone())).unwrap(),
-                    )
+                    .post_message(&Uint8Array::from(
+                        serde_cbor::to_vec(&(round, universe.particles.clone()))
+                            .unwrap()
+                            .as_slice(),
+                    ))
                     .unwrap();
             }
         }
