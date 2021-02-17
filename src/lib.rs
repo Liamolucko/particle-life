@@ -1,9 +1,18 @@
+mod channel;
 mod particle;
 mod universe;
 
 use std::collections::VecDeque;
 use std::time::Duration;
 
+use channel::Command;
+use channel::StepChannel;
+use futures::StreamExt;
+use palette::encoding::Linear;
+use palette::encoding::Srgb;
+use palette::rgb::Rgb;
+use palette::Hsv;
+use palette::IntoColor;
 use particle::Particle;
 use quicksilver::blinds::Key;
 use quicksilver::blinds::MouseButton;
@@ -20,7 +29,6 @@ use quicksilver::Result;
 use quicksilver::Timer;
 use quicksilver::Window;
 use universe::Settings;
-use universe::Universe;
 use universe::RADIUS;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -101,6 +109,31 @@ const CIRCLE_POINTS: [Vector; 20] = [
     },
     Vector { x: 1.0, y: 0.0 },
 ];
+
+fn gen_colors(n: usize) -> Vec<Color> {
+    let mut colors = Vec::with_capacity(n);
+    for i in 0..n {
+        let color: Rgb<Linear<Srgb>> =
+            Hsv::new(i as f32 / n as f32 * 360.0, 1.0, (i % 2 + 1) as f32 * 0.5).into_rgb();
+        colors.push(Color {
+            r: color.red,
+            g: color.green,
+            b: color.blue,
+            a: 1.0,
+        });
+    }
+    colors
+}
+
+fn particle_at(particles: &[Particle], pos: Vector) -> Option<usize> {
+    for (i, p) in particles.iter().enumerate() {
+        let delta: Vector = p.pos - pos;
+        if delta.len2() < RADIUS * RADIUS {
+            return Some(i);
+        }
+    }
+    None
+}
 
 fn circle_points(circle: &Circle) -> [Vector; 20] {
     let mut points = CIRCLE_POINTS;
@@ -195,8 +228,10 @@ fn draw(
 }
 
 #[cfg(target_arch = "wasm32")]
-#[wasm_bindgen(start)]
-pub fn start() {
+#[wasm_bindgen]
+pub fn run() {
+    console_error_panic_hook::set_once();
+
     quicksilver::run(
         quicksilver::Settings {
             title: "Particle Life",
@@ -213,16 +248,71 @@ pub fn start() {
     );
 }
 
-pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> {
-    let mut universe = Universe::new(window.size());
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn run_worker() {
+    use js_sys::Uint8Array;
+    use universe::Universe;
+    use wasm_bindgen::JsCast;
+    use web_sys::DedicatedWorkerGlobalScope;
+    use web_sys::MessageEvent;
 
-    universe.wrap = true;
-    universe.seed(9, 400, &Settings::BALANCED);
+    console_error_panic_hook::set_once();
+
+    let global: DedicatedWorkerGlobalScope = js_sys::global().dyn_into().unwrap();
+    let global2 = global.clone();
+
+    // This'll be immediately resized to the actual size
+    let mut universe = Universe::new(Vector::ZERO);
+    let mut round = 0;
+
+    let closure = Closure::wrap(Box::new(move |msg: MessageEvent| {
+        let cmd: Command = msg.data().into_serde().unwrap();
+
+        match cmd {
+            Command::Resize(size) => universe.resize(size),
+            Command::Seed(settings) => {
+                universe.seed(&settings);
+                round += 1;
+            }
+            Command::ToggleWrap => universe.wrap = !universe.wrap,
+            Command::RandomizeParticles => {
+                universe.randomize_particles();
+                round += 1;
+            }
+            Command::Step => {
+                universe.step();
+                global
+                    .post_message(&Uint8Array::from(
+                        serde_cbor::to_vec(&(round, universe.particles.clone()))
+                            .unwrap()
+                            .as_slice(),
+                    ))
+                    .unwrap();
+            }
+        }
+    }) as Box<dyn FnMut(MessageEvent)>);
+
+    global2.set_onmessage(Some(closure.as_ref().unchecked_ref()));
+
+    // Let the main thread know we're ready to start recieving messages
+    global2.post_message(&JsValue::TRUE).unwrap();
+
+    closure.forget();
+}
+
+pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> {
+    let mut chan = StepChannel::new(window.size());
+    let mut wrap = false;
+
+    chan.send(Command::Seed(Settings::BALANCED)).await;
+
+    let mut colors = gen_colors(9);
 
     let mut zoom = 1.0;
     let mut zoom_dest = zoom;
 
-    let mut cam_pos = universe.size * 0.5;
+    let mut cam_pos = window.size() * 0.5;
     let mut cam_dest = cam_pos;
 
     let mut scroll_timer = Timer::with_duration(Duration::from_millis(300));
@@ -231,7 +321,7 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
     let mut tracking: Option<usize> = None;
 
     // Store the last 10 particle positions so we can maintain the nice trails even when doing less than 10 steps per frame.
-    let mut particle_hist = VecDeque::with_capacity(10);
+    let mut particle_hist: VecDeque<Vec<Particle>> = VecDeque::with_capacity(10);
 
     gfx.set_resize_handler(ResizeHandler::Stretch);
 
@@ -259,7 +349,7 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
             window.set_size(win_size);
 
             gfx.set_camera_size(win_size);
-            universe.resize(win_size);
+            chan.send(Command::Resize(win_size)).await;
         }
 
         while let Some(ev) = input.next_event().await {
@@ -267,63 +357,44 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
                 Event::KeyboardInput(ev) => {
                     if ev.is_down() {
                         match ev.key() {
-                            Key::B => {
-                                universe.seed(9, 400, &Settings::BALANCED);
+                            Key::B
+                            | Key::C
+                            | Key::D
+                            | Key::F
+                            | Key::G
+                            | Key::H
+                            | Key::L
+                            | Key::M
+                            | Key::Q
+                            | Key::S => {
+                                let settings = match ev.key() {
+                                    Key::B => Settings::BALANCED,
+                                    Key::C => Settings::CHAOS,
+                                    Key::D => Settings::DIVERSITY,
+                                    Key::F => Settings::FRICTIONLESS,
+                                    Key::G => Settings::GLIDERS,
+                                    Key::H => Settings::HOMOGENEITY,
+                                    Key::L => Settings::LARGE_CLUSTERS,
+                                    Key::M => Settings::MEDIUM_CLUSTERS,
+                                    Key::Q => Settings::QUIESCENCE,
+                                    Key::S => Settings::SMALL_CLUSTERS,
+                                    _ => unreachable!(),
+                                };
+
                                 tracking = None;
                                 particle_hist.clear();
-                            }
-                            Key::C => {
-                                universe.seed(6, 400, &Settings::CHAOS);
-                                tracking = None;
-                                particle_hist.clear();
-                            }
-                            Key::D => {
-                                universe.seed(12, 400, &Settings::DIVERSITY);
-                                tracking = None;
-                                particle_hist.clear();
-                            }
-                            Key::F => {
-                                universe.seed(6, 300, &Settings::FRICTIONLESS);
-                                tracking = None;
-                                particle_hist.clear();
-                            }
-                            Key::G => {
-                                universe.seed(6, 400, &Settings::GLIDERS);
-                                tracking = None;
-                                particle_hist.clear();
-                            }
-                            Key::H => {
-                                universe.seed(4, 400, &Settings::HOMOGENEITY);
-                                tracking = None;
-                                particle_hist.clear();
-                            }
-                            Key::L => {
-                                universe.seed(6, 400, &Settings::LARGE_CLUSTERS);
-                                tracking = None;
-                                particle_hist.clear();
-                            }
-                            Key::M => {
-                                universe.seed(6, 400, &Settings::MEDIUM_CLUSTERS);
-                                tracking = None;
-                                particle_hist.clear();
-                            }
-                            Key::Q => {
-                                universe.seed(6, 300, &Settings::QUIESCENCE);
-                                tracking = None;
-                                particle_hist.clear();
-                            }
-                            Key::S => {
-                                universe.seed(6, 600, &Settings::SMALL_CLUSTERS);
-                                tracking = None;
-                                particle_hist.clear();
+                                colors = gen_colors(settings.types);
+
+                                chan.send(Command::Seed(settings)).await;
                             }
 
                             Key::W => {
-                                universe.wrap = !universe.wrap;
+                                chan.send(Command::ToggleWrap).await;
+                                wrap = !wrap;
                             }
 
                             Key::Return => {
-                                universe.randomize_particles();
+                                chan.send(Command::RandomizeParticles).await;
                             }
 
                             _ => {}
@@ -358,42 +429,42 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
                     zoom_dest = zoom_dest.min(10.0).max(1.0);
 
                     if scroll_timer.exhaust().is_some() {
-                        let center = universe.size * 0.5;
+                        let center = window.size() * 0.5;
                         cam_dest = cam_pos + (input.mouse().location() - center) / zoom;
                     }
                     scroll_timer.reset();
                 }
                 Event::PointerInput(ev) => {
                     if ev.button() == MouseButton::Left && ev.is_down() {
-                        let center = universe.size * 0.5;
+                        let center = window.size() * 0.5;
                         cam_dest = cam_pos + (input.mouse().location() - center) / zoom;
 
-                        tracking = universe.particle_at(cam_dest);
+                        tracking = particle_at(particle_hist.front().unwrap(), cam_dest);
                     }
                 }
                 Event::Resized(ev) => {
                     gfx.set_camera_size(ev.size());
-                    universe.resize(ev.size());
+                    chan.send(Command::Resize(ev.size())).await;
                 }
                 _ => {}
             }
         }
 
         if let Some(index) = tracking {
-            let p = &universe.particles[index];
+            let p = &particle_hist.front().unwrap()[index];
             cam_dest = p.pos;
 
-            if universe.wrap {
-                if cam_dest.x - cam_pos.x > universe.size.x * 0.5 {
-                    cam_dest.x -= universe.size.x;
-                } else if cam_dest.x - cam_pos.x < universe.size.x * -0.5 {
-                    cam_dest.x += universe.size.x;
+            if wrap {
+                if cam_dest.x - cam_pos.x > window.size().x * 0.5 {
+                    cam_dest.x -= window.size().x;
+                } else if cam_dest.x - cam_pos.x < window.size().x * -0.5 {
+                    cam_dest.x += window.size().x;
                 }
 
-                if cam_dest.y - cam_pos.y > universe.size.y * 0.5 {
-                    cam_dest.y -= universe.size.y;
-                } else if cam_dest.y - cam_pos.y < universe.size.y * -0.5 {
-                    cam_dest.y += universe.size.y;
+                if cam_dest.y - cam_pos.y > window.size().y * 0.5 {
+                    cam_dest.y -= window.size().y;
+                } else if cam_dest.y - cam_pos.y < window.size().y * -0.5 {
+                    cam_dest.y += window.size().y;
                 }
             }
         }
@@ -401,35 +472,35 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
         cam_pos = cam_pos * 0.9 + cam_dest * 0.1;
         zoom = zoom * 0.8 + zoom_dest * 0.2;
 
-        if universe.wrap {
-            if cam_pos.x > universe.size.x {
-                cam_pos.x -= universe.size.x;
-                cam_dest.x -= universe.size.x;
+        if wrap {
+            if cam_pos.x > window.size().x {
+                cam_pos.x -= window.size().x;
+                cam_dest.x -= window.size().x;
             } else if cam_pos.x < 0.0 {
-                cam_pos.x += universe.size.x;
-                cam_dest.x += universe.size.x;
+                cam_pos.x += window.size().x;
+                cam_dest.x += window.size().x;
             }
 
-            if cam_pos.y > universe.size.y {
-                cam_pos.y -= universe.size.y;
-                cam_dest.y -= universe.size.y;
+            if cam_pos.y > window.size().y {
+                cam_pos.y -= window.size().y;
+                cam_dest.y -= window.size().y;
             } else if cam_pos.y < 0.0 {
-                cam_pos.y += universe.size.y;
-                cam_dest.y += universe.size.y;
+                cam_pos.y += window.size().y;
+                cam_dest.y += window.size().y;
             }
         } else {
             cam_pos = cam_pos
-                .min(universe.size * (1.0 - 0.5 / zoom))
-                .max(universe.size * (0.5 / zoom));
+                .min(window.size() * (1.0 - 0.5 / zoom))
+                .max(window.size() * (0.5 / zoom));
         }
 
-        let mut count = 0;
+        let mut count: u32 = 0;
         while step_timer.tick() {
-            universe.step();
+            let particles = chan.next().await.unwrap();
             if particle_hist.len() == 10 {
                 particle_hist.pop_front();
             }
-            particle_hist.push_back(universe.particles.clone());
+            particle_hist.push_back(particles);
 
             // Browsers only fire animation frames when the tab is selected,
             // so cap the steps to 10 when it's been a long time since the last frame.
@@ -443,9 +514,9 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
             draw(
                 &mut gfx,
                 particles,
-                &universe.colors,
-                universe.size,
-                universe.wrap,
+                &colors,
+                window.size(),
+                wrap,
                 zoom,
                 cam_pos,
                 opacity as f32 / particle_hist.len() as f32,
