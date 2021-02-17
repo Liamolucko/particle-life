@@ -11,7 +11,7 @@ fn main() {
             },
             multisampling: Some(4),
             resizable: true,
-            vsync: true,
+            vsync: false,
             ..Default::default()
         },
         app,

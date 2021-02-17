@@ -1,16 +1,11 @@
 use std::cmp::Ordering;
 
-use palette::encoding::Linear;
-use palette::encoding::Srgb;
-use palette::rgb::Rgb;
-use palette::Hsv;
-use palette::IntoColor;
 use quicksilver::geom::Vector;
-use quicksilver::graphics::Color;
 use rand::rngs::OsRng;
 use rand_distr::Distribution;
 use rand_distr::Normal;
 use rand_distr::Uniform;
+use serde::{Deserialize, Serialize};
 
 use crate::particle::Particle;
 
@@ -18,7 +13,10 @@ pub const RADIUS: f32 = 5.0;
 pub const DIAMETER: f32 = RADIUS * 2.0;
 pub const R_SMOOTH: f32 = 2.0;
 
+#[derive(Serialize, Deserialize, Clone, Copy)]
 pub struct Settings {
+    pub particles: usize,
+    pub types: usize,
     pub attract_mean: f32,
     pub attract_std: f32,
     pub minr_lower: f32,
@@ -31,6 +29,8 @@ pub struct Settings {
 
 impl Settings {
     pub const BALANCED: Settings = Settings {
+        types: 9,
+        particles: 400,
         attract_mean: -0.02,
         attract_std: 0.06,
         minr_lower: 0.0,
@@ -42,6 +42,8 @@ impl Settings {
     };
 
     pub const CHAOS: Settings = Settings {
+        types: 6,
+        particles: 400,
         attract_mean: 0.02,
         attract_std: 0.04,
         minr_lower: 0.0,
@@ -53,6 +55,8 @@ impl Settings {
     };
 
     pub const DIVERSITY: Settings = Settings {
+        types: 12,
+        particles: 400,
         attract_mean: -0.01,
         attract_std: 0.04,
         minr_lower: 0.0,
@@ -64,6 +68,8 @@ impl Settings {
     };
 
     pub const FRICTIONLESS: Settings = Settings {
+        types: 6,
+        particles: 300,
         attract_mean: 0.01,
         attract_std: 0.005,
         minr_lower: 10.0,
@@ -75,6 +81,8 @@ impl Settings {
     };
 
     pub const GLIDERS: Settings = Settings {
+        types: 6,
+        particles: 400,
         attract_mean: 0.0,
         attract_std: 0.06,
         minr_lower: 0.0,
@@ -86,6 +94,8 @@ impl Settings {
     };
 
     pub const HOMOGENEITY: Settings = Settings {
+        types: 4,
+        particles: 400,
         attract_mean: 0.0,
         attract_std: 0.04,
         minr_lower: 10.0,
@@ -97,6 +107,8 @@ impl Settings {
     };
 
     pub const LARGE_CLUSTERS: Settings = Settings {
+        types: 6,
+        particles: 400,
         attract_mean: 0.025,
         attract_std: 0.02,
         minr_lower: 0.0,
@@ -108,6 +120,8 @@ impl Settings {
     };
 
     pub const MEDIUM_CLUSTERS: Settings = Settings {
+        types: 6,
+        particles: 400,
         attract_mean: 0.02,
         attract_std: 0.05,
         minr_lower: 0.0,
@@ -119,6 +133,8 @@ impl Settings {
     };
 
     pub const QUIESCENCE: Settings = Settings {
+        types: 6,
+        particles: 300,
         attract_mean: -0.02,
         attract_std: 0.1,
         minr_lower: 10.0,
@@ -130,6 +146,8 @@ impl Settings {
     };
 
     pub const SMALL_CLUSTERS: Settings = Settings {
+        types: 6,
+        particles: 600,
         attract_mean: -0.005,
         attract_std: 0.01,
         minr_lower: 10.0,
@@ -148,7 +166,6 @@ pub struct Universe {
     flat_force: bool,
     friction: f32,
 
-    pub colors: Vec<Color>,
     attractions: Vec<Vec<f32>>,
     min_radii: Vec<Vec<f32>>,
     max_radii: Vec<Vec<f32>>,
@@ -165,7 +182,6 @@ impl Universe {
             flat_force: false,
             friction: 0.05,
 
-            colors: Vec::new(),
             attractions: Vec::new(),
             min_radii: Vec::new(),
             max_radii: Vec::new(),
@@ -174,12 +190,12 @@ impl Universe {
         }
     }
 
-    pub fn seed(&mut self, types: usize, particles: usize, settings: &Settings) {
+    pub fn seed(&mut self, settings: &Settings) {
         self.friction = settings.friction;
         self.flat_force = settings.flat_force;
 
-        self.seed_types(types, settings);
-        self.randomize_particles_inner(particles);
+        self.seed_types(settings.types, settings);
+        self.randomize_particles_inner(settings.particles);
     }
 
     pub fn randomize_particles(&mut self) {
@@ -187,7 +203,7 @@ impl Universe {
     }
 
     fn randomize_particles_inner(&mut self, num: usize) {
-        let type_dist = Uniform::new(0, self.colors.len());
+        let type_dist = Uniform::new(0, self.attractions.len());
         let (x_dist, y_dist) = if self.wrap {
             (
                 Uniform::new_inclusive(0.0, self.size.x),
@@ -223,8 +239,6 @@ impl Universe {
         let minr_dist = Uniform::new_inclusive(settings.minr_lower, settings.minr_upper);
         let maxr_dist = Uniform::new_inclusive(settings.maxr_lower, settings.maxr_upper);
 
-        self.colors.clear();
-        self.colors.reserve(num);
         self.attractions.clear();
         self.attractions.reserve(num);
         self.min_radii.clear();
@@ -233,14 +247,6 @@ impl Universe {
         self.max_radii.reserve(num);
 
         for i in 0..num {
-            let color: Rgb<Linear<Srgb>> =
-                Hsv::new(i as f32 / num as f32 * 360.0, 1.0, (i % 2 + 1) as f32 * 0.5).into_rgb();
-            self.colors.push(Color {
-                r: color.red,
-                g: color.green,
-                b: color.blue,
-                a: 1.0,
-            });
             self.attractions.push(Vec::with_capacity(num));
             self.min_radii.push(Vec::with_capacity(num));
             self.max_radii.push(Vec::with_capacity(num));
@@ -382,15 +388,5 @@ impl Universe {
         }
 
         self.size = size;
-    }
-
-    pub fn particle_at(&mut self, pos: Vector) -> Option<usize> {
-        for (i, p) in self.particles.iter().enumerate() {
-            let delta: Vector = p.pos - pos;
-            if delta.len2() < RADIUS * RADIUS {
-                return Some(i);
-            }
-        }
-        None
     }
 }
