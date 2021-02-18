@@ -1,6 +1,8 @@
 mod channel;
 mod particle;
 mod universe;
+#[cfg(target_arch = "wasm32")]
+mod wasm;
 
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -30,8 +32,9 @@ use quicksilver::Timer;
 use quicksilver::Window;
 use universe::Settings;
 use universe::RADIUS;
+
 #[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::*;
+pub use wasm::*;
 
 const CIRCLE_POINTS: [Vector; 20] = [
     Vector { x: 1.0, y: 0.0 },
@@ -225,80 +228,6 @@ fn draw(
             }
         }
     }
-}
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen]
-pub fn run() {
-    console_error_panic_hook::set_once();
-
-    quicksilver::run(
-        quicksilver::Settings {
-            title: "Particle Life",
-            size: Vector {
-                x: 1600.0,
-                y: 900.0,
-            },
-            multisampling: Some(4),
-            resizable: true,
-            vsync: true,
-            ..Default::default()
-        },
-        app,
-    );
-}
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen]
-pub fn run_worker() {
-    use js_sys::Uint8Array;
-    use universe::Universe;
-    use wasm_bindgen::JsCast;
-    use web_sys::DedicatedWorkerGlobalScope;
-    use web_sys::MessageEvent;
-
-    console_error_panic_hook::set_once();
-
-    let global: DedicatedWorkerGlobalScope = js_sys::global().dyn_into().unwrap();
-    let global2 = global.clone();
-
-    // This'll be immediately resized to the actual size
-    let mut universe = Universe::new(Vector::ZERO);
-    let mut round = 0;
-
-    let closure = Closure::wrap(Box::new(move |msg: MessageEvent| {
-        let cmd: Command = msg.data().into_serde().unwrap();
-
-        match cmd {
-            Command::Resize(size) => universe.resize(size),
-            Command::Seed(settings) => {
-                universe.seed(&settings);
-                round += 1;
-            }
-            Command::ToggleWrap => universe.wrap = !universe.wrap,
-            Command::RandomizeParticles => {
-                universe.randomize_particles();
-                round += 1;
-            }
-            Command::Step => {
-                universe.step();
-                global
-                    .post_message(&Uint8Array::from(
-                        serde_cbor::to_vec(&(round, universe.particles.clone()))
-                            .unwrap()
-                            .as_slice(),
-                    ))
-                    .unwrap();
-            }
-        }
-    }) as Box<dyn FnMut(MessageEvent)>);
-
-    global2.set_onmessage(Some(closure.as_ref().unchecked_ref()));
-
-    // Let the main thread know we're ready to start recieving messages
-    global2.post_message(&JsValue::TRUE).unwrap();
-
-    closure.forget();
 }
 
 pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> {
