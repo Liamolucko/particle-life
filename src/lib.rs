@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use channel::Command;
 use channel::StepChannel;
+use futures::FutureExt;
 use futures::SinkExt;
 use futures::StreamExt;
 use palette::encoding::Linear;
@@ -427,12 +428,13 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
 
         let mut count: u32 = 0;
         while step_timer.tick() {
-            let particles = chan.next().await.unwrap();
-            if particle_hist.len() == 10 {
-                particle_hist.pop_front();
+            // Continue even if not enough particles are ready
+            if let Some(particles) = chan.next().now_or_never().flatten() {
+                if particle_hist.len() == 10 {
+                    particle_hist.pop_front();
+                }
+                particle_hist.push_back(particles);
             }
-            particle_hist.push_back(particles);
-
             // Browsers only fire animation frames when the tab is selected,
             // so cap the steps to 10 when it's been a long time since the last frame.
             count += 1;
