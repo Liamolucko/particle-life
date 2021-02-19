@@ -2,8 +2,10 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
+use futures::channel::mpsc::SendError;
 use futures::stream::FusedStream;
 use futures::FutureExt;
+use futures::Sink;
 use futures::SinkExt;
 use futures::Stream;
 use futures::StreamExt;
@@ -22,7 +24,7 @@ pub struct StepChannel {
 }
 
 impl StepChannel {
-    pub fn new(size: Vector) -> Self {
+    pub fn new() -> Self {
         use futures::channel::mpsc;
 
         // Channel which sends particles from worker thread to main thread
@@ -34,7 +36,7 @@ impl StepChannel {
             futures::executor::block_on(async {
                 use crate::universe::Universe;
 
-                let mut universe = Universe::new(size);
+                let mut universe = Universe::new(Vector::ZERO);
                 let mut round = 0;
 
                 loop {
@@ -77,13 +79,6 @@ impl StepChannel {
             round: 0,
         }
     }
-
-    pub async fn send(&mut self, command: Command) {
-        if matches!(command, Command::Seed(_) | Command::RandomizeParticles) {
-            self.round += 1;
-        }
-        self.tx.send(command).await.unwrap();
-    }
 }
 
 impl Stream for StepChannel {
@@ -103,5 +98,28 @@ impl Stream for StepChannel {
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
         }
+    }
+}
+
+impl Sink<Command> for StepChannel {
+    type Error = SendError;
+
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.tx.poll_ready(cx)
+    }
+
+    fn start_send(mut self: Pin<&mut Self>, item: Command) -> Result<(), Self::Error> {
+        if matches!(item, Command::Seed(_) | Command::RandomizeParticles) {
+            self.round += 1;
+        }
+        self.tx.start_send(item)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.tx.poll_flush_unpin(cx)
+    }
+
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.tx.poll_close_unpin(cx)
     }
 }

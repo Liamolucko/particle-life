@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use channel::Command;
 use channel::StepChannel;
+use futures::SinkExt;
 use futures::StreamExt;
 use palette::encoding::Linear;
 use palette::encoding::Srgb;
@@ -231,10 +232,8 @@ fn draw(
 }
 
 pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> {
-    let mut chan = StepChannel::new(window.size());
+    let mut chan = StepChannel::new();
     let mut wrap = false;
-
-    chan.send(Command::Seed(Settings::BALANCED)).await;
 
     let mut colors = gen_colors(9);
 
@@ -262,6 +261,9 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
         .document_element()
         .unwrap();
 
+    chan.send(Command::Resize(window.size())).await.unwrap();
+    chan.send(Command::Seed(Settings::BALANCED)).await.unwrap();
+
     loop {
         gfx.clear(Color::BLACK);
 
@@ -278,7 +280,7 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
             window.set_size(win_size);
 
             gfx.set_camera_size(win_size);
-            chan.send(Command::Resize(win_size)).await;
+            chan.send(Command::Resize(win_size)).await.unwrap();
         }
 
         while let Some(ev) = input.next_event().await {
@@ -314,16 +316,16 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
                                 particle_hist.clear();
                                 colors = gen_colors(settings.types);
 
-                                chan.send(Command::Seed(settings)).await;
+                                chan.send(Command::Seed(settings)).await.unwrap();
                             }
 
                             Key::W => {
-                                chan.send(Command::ToggleWrap).await;
+                                chan.send(Command::ToggleWrap).await.unwrap();
                                 wrap = !wrap;
                             }
 
                             Key::Return => {
-                                chan.send(Command::RandomizeParticles).await;
+                                chan.send(Command::RandomizeParticles).await.unwrap();
                             }
 
                             _ => {}
@@ -373,7 +375,7 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
                 }
                 Event::Resized(ev) => {
                     gfx.set_camera_size(ev.size());
-                    chan.send(Command::Resize(ev.size())).await;
+                    chan.send(Command::Resize(ev.size())).await.unwrap();
                 }
                 _ => {}
             }

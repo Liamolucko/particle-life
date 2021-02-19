@@ -43,7 +43,8 @@ pub fn run_worker() {
     let mut round = 0;
 
     let closure = Closure::wrap(Box::new(move |msg: MessageEvent| {
-        let cmd: Command = msg.data().into_serde().unwrap();
+        let buf: Uint8Array = msg.data().dyn_into().unwrap();
+        let cmd: Command = serde_cbor::from_slice(&buf.to_vec()).unwrap();
 
         match cmd {
             Command::Resize(size) => universe.resize(size),
