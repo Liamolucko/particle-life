@@ -24,6 +24,7 @@ web-sys = { version = "0.3", features = ["Document", "Element", "Worker", "Dedic
 js-sys = "0.3.47"
 console_error_panic_hook = "0.1"
 serde_cbor = "0.11.1"
+wasm-bindgen-futures = "0.4.21"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 async-channel = "1.5.1"

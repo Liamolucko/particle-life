@@ -4,7 +4,9 @@ mod universe;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 
+use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::rc::Rc;
 use std::time::Duration;
 
 use channel::Command;
@@ -254,25 +256,30 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
 
     gfx.set_resize_handler(ResizeHandler::Stretch);
 
-    #[cfg(target_arch = "wasm32")]
-    let root_element = web_sys::window()
-        .unwrap()
-        .document()
-        .unwrap()
-        .document_element()
-        .unwrap();
-
     chan.send(Command::Resize(window.size())).await.unwrap();
     chan.send(Command::Seed(Settings::BALANCED)).await.unwrap();
 
-    loop {
-        gfx.clear(Color::BLACK);
+    let window = Rc::new(window);
+    let gfx = Rc::new(RefCell::new(gfx));
+    let chan = Rc::new(RefCell::new(chan));
 
-        // winit doesn't currently trigger resize events on the web, so we have to do it this way
-        #[cfg(target_arch = "wasm32")]
-        if window.size().x as i32 != root_element.client_width()
-            || window.size().y as i32 != root_element.client_height()
-        {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use wasm_bindgen::prelude::*;
+        use wasm_bindgen::JsCast;
+
+        let root_element = web_sys::window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .document_element()
+            .unwrap();
+
+        let window = window.clone();
+        let gfx = gfx.clone();
+        let chan = chan.clone();
+
+        let closure = Closure::wrap(Box::new(move || {
             let win_size = Vector {
                 x: root_element.client_width() as f32,
                 y: root_element.client_height() as f32,
@@ -280,9 +287,25 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
 
             window.set_size(win_size);
 
-            gfx.set_camera_size(win_size);
-            chan.send(Command::Resize(win_size)).await.unwrap();
-        }
+            gfx.borrow_mut().set_camera_size(win_size);
+
+            let chan = chan.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                chan.borrow_mut()
+                    .send(Command::Resize(win_size))
+                    .await
+                    .unwrap()
+            });
+        }) as Box<dyn FnMut()>);
+        web_sys::window()
+            .unwrap()
+            .add_event_listener_with_callback("resize", closure.as_ref().unchecked_ref())
+            .unwrap();
+        closure.forget();
+    }
+
+    loop {
+        gfx.borrow_mut().clear(Color::BLACK);
 
         while let Some(ev) = input.next_event().await {
             match ev {
@@ -317,16 +340,22 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
                                 particle_hist.clear();
                                 colors = gen_colors(settings.types);
 
-                                chan.send(Command::Seed(settings)).await.unwrap();
+                                chan.borrow_mut()
+                                    .send(Command::Seed(settings))
+                                    .await
+                                    .unwrap();
                             }
 
                             Key::W => {
-                                chan.send(Command::ToggleWrap).await.unwrap();
+                                chan.borrow_mut().send(Command::ToggleWrap).await.unwrap();
                                 wrap = !wrap;
                             }
 
                             Key::Return => {
-                                chan.send(Command::RandomizeParticles).await.unwrap();
+                                chan.borrow_mut()
+                                    .send(Command::RandomizeParticles)
+                                    .await
+                                    .unwrap();
                             }
 
                             _ => {}
@@ -375,8 +404,11 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
                     }
                 }
                 Event::Resized(ev) => {
-                    gfx.set_camera_size(ev.size());
-                    chan.send(Command::Resize(ev.size())).await.unwrap();
+                    gfx.borrow_mut().set_camera_size(ev.size());
+                    chan.borrow_mut()
+                        .send(Command::Resize(ev.size()))
+                        .await
+                        .unwrap();
                 }
                 _ => {}
             }
@@ -429,7 +461,7 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
         let mut count: u32 = 0;
         while step_timer.tick() {
             // Continue even if not enough particles are ready
-            if let Some(particles) = chan.next().now_or_never().flatten() {
+            if let Some(particles) = chan.borrow_mut().next().now_or_never().flatten() {
                 if particle_hist.len() == 10 {
                     particle_hist.pop_front();
                 }
@@ -445,7 +477,7 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
 
         for (opacity, particles) in particle_hist.iter().enumerate() {
             draw(
-                &mut gfx,
+                &mut gfx.borrow_mut(),
                 particles,
                 &colors,
                 window.size(),
@@ -456,6 +488,6 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
             );
         }
 
-        gfx.present(&window)?;
+        gfx.borrow_mut().present(&window)?;
     }
 }
