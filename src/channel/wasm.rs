@@ -30,9 +30,17 @@ fn serialize(value: &impl Serialize) -> serde_cbor::Result<Uint8Array> {
 pub struct StepChannel {
     buf: Rc<RefCell<VecDeque<(u32, Vec<Particle>)>>>,
     worker: Worker,
+    /// Used to ignore leftover messages from prior to resetting
     round: u32,
+    /// The worker takes a little bit to start receiving messages,
+    /// so this is false until it sends a message saying it's ready.
     ready: Rc<AtomicBool>,
     listener: Rc<Cell<Option<Box<dyn FnOnce()>>>>,
+    /// The worker sends back steps in batches of 10, so we need to only send step commands every 10th request.
+    req_num: u8,
+    /// Don't queue up too many steps while waiting for the previous round's steps to run out.
+    /// Previously it would build up every time you reset until it was queueing thousands of step commands.
+    round_catchup: bool,
 }
 
 impl StepChannel {
@@ -49,12 +57,17 @@ impl StepChannel {
             round: 0,
             ready: ready.clone(),
             listener: listener.clone(),
+            req_num: 0,
+            round_catchup: false,
         };
 
         let closure = Closure::wrap(Box::new(move |msg: MessageEvent| {
             if let Ok(slice) = msg.data().dyn_into::<Uint8Array>() {
-                buf.borrow_mut()
-                    .push_back(serde_cbor::from_slice(&slice.to_vec()).unwrap());
+                let (round, particles): (u32, Vec<Vec<Particle>>) =
+                    serde_cbor::from_slice(&slice.to_vec()).unwrap();
+                for particles in particles {
+                    buf.borrow_mut().push_back((round, particles));
+                }
             } else {
                 ready.swap(true, Ordering::Relaxed);
             }
@@ -76,20 +89,33 @@ impl StepChannel {
 impl Stream for StepChannel {
     type Item = Vec<Particle>;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let el = self.buf.borrow_mut().pop_front();
         match el {
             Some((round, v)) => {
-                self.worker
-                    .post_message(&serialize(&Command::Step).unwrap())
-                    .unwrap();
+                if self.req_num == 9 {
+                    self.req_num = 0;
+                    self.worker
+                        .post_message(&serialize(&Command::Step).unwrap())
+                        .unwrap();
+                } else {
+                    self.req_num += 1;
+                }
                 if round == self.round {
+                    self.round_catchup = false;
                     Poll::Ready(Some(v))
                 } else {
+                    self.round_catchup = true;
                     self.poll_next(cx)
                 }
             }
             None => {
+                if !self.round_catchup {
+                    // This should build up a queue of steps until it never runs out.
+                    self.worker
+                        .post_message(&serialize(&Command::Step).unwrap())
+                        .unwrap();
+                }
                 let waker = cx.waker().clone();
                 self.listener.set(Some(Box::new(|| waker.wake())));
                 Poll::Pending
@@ -118,10 +144,8 @@ impl Sink<Command> for StepChannel {
             self.round += 1;
             self.buf.borrow_mut().clear();
 
-            for _ in 0..10 {
-                self.worker
-                    .post_message(&serialize(&Command::Step).unwrap())?;
-            }
+            self.worker
+                .post_message(&serialize(&Command::Step).unwrap())?;
         }
 
         Ok(())

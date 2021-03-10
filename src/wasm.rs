@@ -58,10 +58,14 @@ pub fn run_worker() {
                 round += 1;
             }
             Command::Step => {
-                universe.step();
+                let mut buf = Vec::with_capacity(10);
+                for _ in 0..10 {
+                    universe.step();
+                    buf.push(universe.particles.clone());
+                }
                 global
                     .post_message(&Uint8Array::from(
-                        serde_cbor::to_vec(&(round, universe.particles.clone()))
+                        serde_cbor::to_vec(&(round, buf))
                             .unwrap()
                             .as_slice(),
                     ))
