@@ -1,0 +1,43 @@
+on: [push, pull_request]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          default: true
+      - name: Install wasm-pack
+        uses: actions-rs/cargo@v1
+        with:
+          command: install
+          args: wasm-pack --locked
+      - name: Build
+        run: |
+          wasm-pack build --target no-modules --no-typescript --out-dir build
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: output
+          path: |
+            index.html
+            worker.js
+            pkg/particle_life_bg.wasm
+            pkg/particle_life.js
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.repository == 'Liamolucko/particle-life' && github.ref == 'refs/heads/master'
+    needs: build
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v2
+        with:
+          name: output
+          path: .
+      - name: Deploy
+        uses: JamesIves/github-pages-deploy-action@4.1.0
+        with:
+          branch: gh-pages
+          folder: .
