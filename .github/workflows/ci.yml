@@ -34,7 +34,7 @@ jobs:
           args: wasm-pack
       - name: Build
         run: |
-          wasm-pack build --target no-modules --no-typescript --out-dir build
+          wasm-pack build --target no-modules --no-typescript
       - name: Upload Artifacts
         uses: actions/upload-artifact@v2
         with:
@@ -42,8 +42,8 @@ jobs:
           path: |
             index.html
             worker.js
-            build/particle_life_bg.wasm
-            build/particle_life.js
+            pkg/particle_life_bg.wasm
+            pkg/particle_life.js
   deploy:
     runs-on: ubuntu-latest
     if: github.repository == 'Liamolucko/particle-life' && github.ref == 'refs/heads/master'
