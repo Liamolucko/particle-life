@@ -1,5 +1,22 @@
+name: ci
 on: [push, pull_request]
+env:
+  CARGO_TERM_COLOR: always
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: wasm32-unknown-unknown
+      - name: Format
+        run: cargo fmt -- --check
+      - name: Lint
+        run: cargo clippy
   build:
     runs-on: ubuntu-latest
     steps:
@@ -14,7 +31,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: install
-          args: wasm-pack --locked
+          args: wasm-pack
       - name: Build
         run: |
           wasm-pack build --target no-modules --no-typescript --out-dir build
@@ -25,20 +42,22 @@ jobs:
           path: |
             index.html
             worker.js
-            pkg/particle_life_bg.wasm
-            pkg/particle_life.js
+            build/particle_life_bg.wasm
+            build/particle_life.js
   deploy:
     runs-on: ubuntu-latest
     if: github.repository == 'Liamolucko/particle-life' && github.ref == 'refs/heads/master'
     needs: build
     steps:
+      - name: Checkout
+        uses: actions/checkout@v2
       - name: Download Artifacts
         uses: actions/download-artifact@v2
         with:
           name: output
-          path: .
+          path: build
       - name: Deploy
         uses: JamesIves/github-pages-deploy-action@4.1.0
         with:
           branch: gh-pages
-          folder: .
+          folder: build
