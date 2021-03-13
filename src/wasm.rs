@@ -65,9 +65,7 @@ pub fn run_worker() {
                 }
                 global
                     .post_message(&Uint8Array::from(
-                        serde_cbor::to_vec(&(round, buf))
-                            .unwrap()
-                            .as_slice(),
+                        serde_cbor::to_vec(&(round, buf)).unwrap().as_slice(),
                     ))
                     .unwrap();
             }
