@@ -8,7 +8,8 @@ jobs:
       - name: Setup Rust
         uses: actions-rs/toolchain@v1
         with:
-          default: true
+          toolchain: stable
+          target: wasm32-unknown-unknown
       - name: Install wasm-pack
         uses: actions-rs/cargo@v1
         with:
