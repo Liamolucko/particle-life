@@ -406,20 +406,22 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
         chan.req();
 
         if let Some(index) = tracking {
-            let p = &particle_hist.front().unwrap()[index];
-            cam_dest = p.pos;
+            if let Some(particles) = particle_hist.front() {
+                let p = &particles[index];
+                cam_dest = p.pos;
 
-            if wrap {
-                if cam_dest.x - cam_pos.x > window.size().x * 0.5 {
-                    cam_dest.x -= window.size().x;
-                } else if cam_dest.x - cam_pos.x < window.size().x * -0.5 {
-                    cam_dest.x += window.size().x;
-                }
+                if wrap {
+                    if cam_dest.x - cam_pos.x > window.size().x * 0.5 {
+                        cam_dest.x -= window.size().x;
+                    } else if cam_dest.x - cam_pos.x < window.size().x * -0.5 {
+                        cam_dest.x += window.size().x;
+                    }
 
-                if cam_dest.y - cam_pos.y > window.size().y * 0.5 {
-                    cam_dest.y -= window.size().y;
-                } else if cam_dest.y - cam_pos.y < window.size().y * -0.5 {
-                    cam_dest.y += window.size().y;
+                    if cam_dest.y - cam_pos.y > window.size().y * 0.5 {
+                        cam_dest.y -= window.size().y;
+                    } else if cam_dest.y - cam_pos.y < window.size().y * -0.5 {
+                        cam_dest.y += window.size().y;
+                    }
                 }
             }
         }
