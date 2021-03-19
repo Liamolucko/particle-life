@@ -282,6 +282,7 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
 
             gfx.set_camera_size(win_size);
             chan.send(Command::Resize(win_size)).await.unwrap();
+            particle_hist.clear();
         }
 
         while let Some(ev) = input.next_event().await {
@@ -377,10 +378,32 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
                 Event::Resized(ev) => {
                     gfx.set_camera_size(ev.size());
                     chan.send(Command::Resize(ev.size())).await.unwrap();
+                    particle_hist.clear();
                 }
                 _ => {}
             }
         }
+
+        // Browsers only fire animation frames when the tab is selected,
+        // so cap the steps to 10 when it's been a long time since the last frame.
+        let count = usize::min(step_timer.exhaust().map_or(0, Into::into), 10);
+        for _ in 0..count {
+            // Continue even if not enough particles are ready
+            if let Some(particles) = chan.next().now_or_never().flatten() {
+                if particle_hist.len() == 10 {
+                    particle_hist.pop_front();
+                }
+                particle_hist.push_back(particles);
+            } else if particle_hist.len() == 0 {
+                #[cfg(target_arch = "wasm32")]
+                chan.req();
+                // It's better to delay the frame than display a black screen
+                particle_hist.push_back(chan.next().await.unwrap());
+            }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        chan.req();
 
         if let Some(index) = tracking {
             let p = &particle_hist.front().unwrap()[index];
@@ -426,26 +449,6 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
                 .max(window.size() * (0.5 / zoom));
         }
 
-        let mut count: u32 = 0;
-        while step_timer.tick() {
-            // Continue even if not enough particles are ready
-            if let Some(particles) = chan.next().now_or_never().flatten() {
-                if particle_hist.len() == 10 {
-                    particle_hist.pop_front();
-                }
-                particle_hist.push_back(particles);
-            }
-            // Browsers only fire animation frames when the tab is selected,
-            // so cap the steps to 10 when it's been a long time since the last frame.
-            count += 1;
-            if count == 10 {
-                step_timer.reset();
-            }
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        chan.req();
-
         for (opacity, particles) in particle_hist.iter().enumerate() {
             draw(
                 &mut gfx,
@@ -455,7 +458,7 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
                 wrap,
                 zoom,
                 cam_pos,
-                opacity as f32 / particle_hist.len() as f32,
+                (opacity + 1) as f32 / particle_hist.len() as f32,
             );
         }
 

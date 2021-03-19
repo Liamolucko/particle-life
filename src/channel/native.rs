@@ -48,7 +48,10 @@ impl StepChannel {
                         _ = async {
                             while let Some(cmd) = cmd_rx.next().await {
                                 match cmd {
-                                    Command::Resize(size) => universe.resize(size),
+                                    Command::Resize(size) => {
+                                        universe.resize(size);
+                                        round += 1;
+                                    },
                                     Command::Seed(settings) => {
                                         universe.seed(&settings);
                                         round += 1;
@@ -58,9 +61,7 @@ impl StepChannel {
                                         universe.randomize_particles();
                                         round += 1;
                                     },
-                                    Command::Step => {
-                                        // This one is only used for wasm mode - native mode's stepping is automatically limited by the channel buffer.
-                                    }
+                                    _ => {}
                                 }
                             }
                         }.fuse() => {},
@@ -84,15 +85,14 @@ impl StepChannel {
 impl Stream for StepChannel {
     type Item = Vec<Particle>;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        let inner = self.get_mut();
-        match inner.rx.poll_next_unpin(cx) {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        match self.rx.poll_next_unpin(cx) {
             Poll::Ready(Some((round, particles))) => {
-                if round == inner.round {
+                if round == self.round {
                     Poll::Ready(Some(particles))
                 } else {
                     // Skip it and try again
-                    inner.poll_next_unpin(cx)
+                    self.poll_next_unpin(cx)
                 }
             }
             Poll::Ready(None) => Poll::Ready(None),
@@ -109,8 +109,12 @@ impl Sink<Command> for StepChannel {
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Command) -> Result<(), Self::Error> {
-        if matches!(item, Command::Seed(_) | Command::RandomizeParticles) {
+        if matches!(
+            item,
+            Command::Seed(_) | Command::RandomizeParticles | Command::Resize(_)
+        ) {
             self.round += 1;
+            while let Ok(_) = self.rx.try_next() {} // clear the buffer of outdated messages
         }
         self.tx.start_send(item)
     }

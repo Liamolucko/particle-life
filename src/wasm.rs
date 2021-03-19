@@ -47,7 +47,10 @@ pub fn run_worker() {
         let cmd: Command = serde_cbor::from_slice(&buf.to_vec()).unwrap();
 
         match cmd {
-            Command::Resize(size) => universe.resize(size),
+            Command::Resize(size) => {
+                universe.resize(size);
+                round += 1;
+            }
             Command::Seed(settings) => {
                 universe.seed(&settings);
                 round += 1;

@@ -134,7 +134,10 @@ impl Sink<Command> for StepChannel {
     fn start_send(mut self: Pin<&mut Self>, item: Command) -> Result<(), Self::Error> {
         self.worker.post_message(&serialize(&item).unwrap())?;
 
-        if matches!(item, Command::Seed(_) | Command::RandomizeParticles) {
+        if matches!(
+            item,
+            Command::Seed(_) | Command::RandomizeParticles | Command::Resize(_)
+        ) {
             self.round += 1;
             self.buf.borrow_mut().clear();
         }
