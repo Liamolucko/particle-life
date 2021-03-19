@@ -57,9 +57,9 @@ pub fn run_worker() {
                 universe.randomize_particles();
                 round += 1;
             }
-            Command::Step => {
-                let mut buf = Vec::with_capacity(10);
-                for _ in 0..10 {
+            Command::Run(n) => {
+                let mut buf = Vec::with_capacity(n);
+                for _ in 0..n {
                     universe.step();
                     buf.push(universe.particles.clone());
                 }

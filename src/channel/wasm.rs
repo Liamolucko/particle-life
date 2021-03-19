@@ -22,6 +22,11 @@ use crate::particle::Particle;
 
 use super::Command;
 
+/// The expected size for the step buffer to be. Not actually guaranteed though.
+/// The bigger the buffer, the less likely there are to be dropped steps,
+/// but it means that the simulation will run behind when you do something like resize.
+const BUF_SIZE: usize = 10;
+
 /// Serializes a value to CBOR and stores it in a Uint8Array
 fn serialize(value: &impl Serialize) -> serde_cbor::Result<Uint8Array> {
     Ok(Uint8Array::from(serde_cbor::to_vec(value)?.as_slice()))
@@ -36,18 +41,13 @@ pub struct StepChannel {
     /// so this is false until it sends a message saying it's ready.
     ready: Rc<AtomicBool>,
     listener: Rc<Cell<Option<Box<dyn FnOnce()>>>>,
-    /// The worker sends back steps in batches of 10, so we need to only send step commands every 10th request.
-    req_num: u8,
-    /// Don't queue up too many steps while waiting for the previous round's steps to run out.
-    /// Previously it would build up every time you reset until it was queueing thousands of step commands.
-    round_catchup: bool,
 }
 
 impl StepChannel {
     pub fn new() -> Self {
         let worker = Worker::new("./worker.js").unwrap();
 
-        let buf = Rc::new(RefCell::new(VecDeque::with_capacity(10)));
+        let buf = Rc::new(RefCell::new(VecDeque::with_capacity(BUF_SIZE)));
         let ready = Rc::new(AtomicBool::new(false));
         let listener = Rc::new(Cell::new(None));
 
@@ -57,8 +57,6 @@ impl StepChannel {
             round: 0,
             ready: ready.clone(),
             listener: listener.clone(),
-            req_num: 0,
-            round_catchup: false,
         };
 
         let closure = Closure::wrap(Box::new(move |msg: MessageEvent| {
@@ -84,38 +82,34 @@ impl StepChannel {
 
         chan
     }
+
+    /// Sends a message to the worker with the number of steps which need to be run before the next frame.
+    pub fn req(&self) {
+        self.worker
+            .post_message(
+                &serialize(&Command::Run(
+                    BUF_SIZE - usize::min(self.buf.borrow().len(), BUF_SIZE),
+                ))
+                .unwrap(),
+            )
+            .unwrap();
+    }
 }
 
 impl Stream for StepChannel {
     type Item = Vec<Particle>;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let el = self.buf.borrow_mut().pop_front();
         match el {
             Some((round, v)) => {
-                if self.req_num == 9 {
-                    self.req_num = 0;
-                    self.worker
-                        .post_message(&serialize(&Command::Step).unwrap())
-                        .unwrap();
-                } else {
-                    self.req_num += 1;
-                }
                 if round == self.round {
-                    self.round_catchup = false;
                     Poll::Ready(Some(v))
                 } else {
-                    self.round_catchup = true;
                     self.poll_next(cx)
                 }
             }
             None => {
-                if !self.round_catchup {
-                    // This should build up a queue of steps until it never runs out.
-                    self.worker
-                        .post_message(&serialize(&Command::Step).unwrap())
-                        .unwrap();
-                }
                 let waker = cx.waker().clone();
                 self.listener.set(Some(Box::new(|| waker.wake())));
                 Poll::Pending
@@ -143,9 +137,6 @@ impl Sink<Command> for StepChannel {
         if matches!(item, Command::Seed(_) | Command::RandomizeParticles) {
             self.round += 1;
             self.buf.borrow_mut().clear();
-
-            self.worker
-                .post_message(&serialize(&Command::Step).unwrap())?;
         }
 
         Ok(())

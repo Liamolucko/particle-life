@@ -443,6 +443,9 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
             }
         }
 
+        #[cfg(target_arch = "wasm32")]
+        chan.req();
+
         for (opacity, particles) in particle_hist.iter().enumerate() {
             draw(
                 &mut gfx,

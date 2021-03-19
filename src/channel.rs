@@ -19,5 +19,5 @@ pub enum Command {
     Seed(Settings),
     ToggleWrap,
     RandomizeParticles,
-    Step,
+    Run(usize),
 }
