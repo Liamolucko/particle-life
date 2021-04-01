@@ -1,4 +1,3 @@
-use quicksilver::geom::Vector;
 use serde::{Deserialize, Serialize};
 
 use crate::universe::Settings;
@@ -15,7 +14,6 @@ pub use wasm::*;
 
 #[derive(Serialize, Deserialize)]
 pub enum Command {
-    Resize(Vector),
     Seed(Settings),
     ToggleWrap,
     RandomizeParticles,

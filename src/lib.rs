@@ -158,7 +158,7 @@ fn draw(
     target: Vector,
     opacity: f32,
 ) {
-    let center: Vector = size * 0.5;
+    let center: Vector = universe::SIZE * 0.5;
 
     for p in particles.iter() {
         let color = colors[p.r#type].with_alpha(opacity);
@@ -168,18 +168,18 @@ fn draw(
         // Wrapping render position
         if wrap {
             if rel.x > center.x {
-                rel.x -= size.x;
+                rel.x -= universe::SIZE.x;
             } else if rel.x < -center.x {
-                rel.x += size.x;
+                rel.x += universe::SIZE.x;
             }
             if rel.y > center.y {
-                rel.y -= size.y;
+                rel.y -= universe::SIZE.y;
             } else if rel.y < -center.y {
-                rel.y += size.y;
+                rel.y += universe::SIZE.y;
             }
         }
 
-        let pos = rel * zoom + center;
+        let pos = rel * zoom + size * 0.5;
 
         let mut circle = Circle::new(pos, RADIUS * zoom);
 
@@ -238,7 +238,10 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
 
     let mut colors = gen_colors(9);
 
-    let mut zoom = 1.0;
+    let mut zoom = f32::max(
+        window.size().x / universe::SIZE.x,
+        window.size().y / universe::SIZE.y,
+    );
     let mut zoom_dest = zoom;
 
     let mut cam_pos = window.size() * 0.5;
@@ -262,7 +265,6 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
         .document_element()
         .unwrap();
 
-    chan.send(Command::Resize(window.size())).await.unwrap();
     chan.send(Command::Seed(Settings::BALANCED)).await.unwrap();
 
     loop {
@@ -281,7 +283,6 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
             window.set_size(win_size);
 
             gfx.set_camera_size(win_size);
-            chan.send(Command::Resize(win_size)).await.unwrap();
             particle_hist.clear();
         }
 
@@ -359,7 +360,11 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
                     };
 
                     zoom_dest *= f32::powf(1.1, scrolled);
-                    zoom_dest = zoom_dest.min(10.0).max(1.0);
+                    let min_zoom = f32::max(
+                        window.size().x / universe::SIZE.x,
+                        window.size().y / universe::SIZE.y,
+                    );
+                    zoom_dest = zoom_dest.min(min_zoom * 10.0).max(min_zoom);
 
                     if scroll_timer.exhaust().is_some() {
                         let center = window.size() * 0.5;
@@ -377,7 +382,6 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
                 }
                 Event::Resized(ev) => {
                     gfx.set_camera_size(ev.size());
-                    chan.send(Command::Resize(ev.size())).await.unwrap();
                     particle_hist.clear();
                 }
                 _ => {}
@@ -411,16 +415,16 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
                 cam_dest = p.pos;
 
                 if wrap {
-                    if cam_dest.x - cam_pos.x > window.size().x * 0.5 {
-                        cam_dest.x -= window.size().x;
-                    } else if cam_dest.x - cam_pos.x < window.size().x * -0.5 {
-                        cam_dest.x += window.size().x;
+                    if cam_dest.x - cam_pos.x > universe::SIZE.x * 0.5 {
+                        cam_dest.x -= universe::SIZE.x;
+                    } else if cam_dest.x - cam_pos.x < universe::SIZE.x * -0.5 {
+                        cam_dest.x += universe::SIZE.x;
                     }
 
-                    if cam_dest.y - cam_pos.y > window.size().y * 0.5 {
-                        cam_dest.y -= window.size().y;
-                    } else if cam_dest.y - cam_pos.y < window.size().y * -0.5 {
-                        cam_dest.y += window.size().y;
+                    if cam_dest.y - cam_pos.y > universe::SIZE.y * 0.5 {
+                        cam_dest.y -= universe::SIZE.y;
+                    } else if cam_dest.y - cam_pos.y < universe::SIZE.y * -0.5 {
+                        cam_dest.y += universe::SIZE.y;
                     }
                 }
             }
@@ -430,25 +434,27 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
         zoom = zoom * 0.8 + zoom_dest * 0.2;
 
         if wrap {
-            if cam_pos.x > window.size().x {
-                cam_pos.x -= window.size().x;
-                cam_dest.x -= window.size().x;
+            if cam_pos.x > universe::SIZE.x {
+                cam_pos.x -= universe::SIZE.x;
+                cam_dest.x -= universe::SIZE.x;
             } else if cam_pos.x < 0.0 {
-                cam_pos.x += window.size().x;
-                cam_dest.x += window.size().x;
+                cam_pos.x += universe::SIZE.x;
+                cam_dest.x += universe::SIZE.x;
             }
 
-            if cam_pos.y > window.size().y {
-                cam_pos.y -= window.size().y;
-                cam_dest.y -= window.size().y;
+            if cam_pos.y > universe::SIZE.y {
+                cam_pos.y -= universe::SIZE.y;
+                cam_dest.y -= universe::SIZE.y;
             } else if cam_pos.y < 0.0 {
-                cam_pos.y += window.size().y;
-                cam_dest.y += window.size().y;
+                cam_pos.y += universe::SIZE.y;
+                cam_dest.y += universe::SIZE.y;
             }
         } else {
+            // The furthest towards the top left the camera should be able to move (world space)
+            let top_left_pos = window.size() * (0.5 / zoom);
             cam_pos = cam_pos
-                .min(window.size() * (1.0 - 0.5 / zoom))
-                .max(window.size() * (0.5 / zoom));
+                .min(universe::SIZE - top_left_pos)
+                .max(top_left_pos);
         }
 
         for (opacity, particles) in particle_hist.iter().enumerate() {

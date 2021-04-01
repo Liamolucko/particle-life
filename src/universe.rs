@@ -13,6 +13,8 @@ pub const RADIUS: f32 = 5.0;
 pub const DIAMETER: f32 = RADIUS * 2.0;
 pub const R_SMOOTH: f32 = 2.0;
 
+pub const SIZE: Vector = Vector { x: 1600.0, y: 900.0 };
+
 #[derive(Serialize, Deserialize, Clone, Copy)]
 pub struct Settings {
     pub particles: usize,
@@ -160,8 +162,6 @@ impl Settings {
 }
 
 pub struct Universe {
-    pub size: Vector,
-
     pub wrap: bool,
     flat_force: bool,
     friction: f32,
@@ -174,10 +174,8 @@ pub struct Universe {
 }
 
 impl Universe {
-    pub fn new(size: Vector) -> Self {
+    pub fn new() -> Self {
         Self {
-            size,
-
             wrap: false,
             flat_force: false,
             friction: 0.05,
@@ -206,13 +204,13 @@ impl Universe {
         let type_dist = Uniform::new(0, self.attractions.len());
         let (x_dist, y_dist) = if self.wrap {
             (
-                Uniform::new_inclusive(0.0, self.size.x),
-                Uniform::new_inclusive(0.0, self.size.y),
+                Uniform::new_inclusive(0.0, SIZE.x),
+                Uniform::new_inclusive(0.0, SIZE.y),
             )
         } else {
             (
-                Uniform::new_inclusive(self.size.x * 0.25, self.size.x * 0.75),
-                Uniform::new_inclusive(self.size.y * 0.25, self.size.y * 0.75),
+                Uniform::new_inclusive(SIZE.x * 0.25, SIZE.x * 0.75),
+                Uniform::new_inclusive(SIZE.y * 0.25, SIZE.y * 0.75),
             )
         };
         let vel_dist = Normal::new(0.0, 0.2).unwrap();
@@ -277,7 +275,7 @@ impl Universe {
 
     pub fn step(&mut self) {
         // rust-analyzer couldn't figure out it's type (same for all the other times)
-        let center: Vector = self.size * 0.5;
+        let center: Vector = SIZE * 0.5;
 
         for i in 0..self.particles.len() {
             // Only iterate over all the particles after i, and then calculate new velocities to both.
@@ -290,14 +288,14 @@ impl Universe {
                 let mut delta: Vector = q.pos - p.pos;
                 if self.wrap {
                     if delta.x > center.x {
-                        delta.x -= self.size.x;
+                        delta.x -= SIZE.x;
                     } else if delta.x < -center.x {
-                        delta.x += self.size.x;
+                        delta.x += SIZE.x;
                     }
                     if delta.y > center.y {
-                        delta.y -= self.size.y;
+                        delta.y -= SIZE.y;
                     } else if delta.y < -center.y {
-                        delta.y += self.size.y
+                        delta.y += SIZE.y
                     }
                 }
 
@@ -349,44 +347,32 @@ impl Universe {
 
             if self.wrap {
                 if p.pos.x < RADIUS {
-                    p.pos.x += self.size.x;
-                } else if p.pos.x >= self.size.x {
-                    p.pos.x -= self.size.x;
+                    p.pos.x += SIZE.x;
+                } else if p.pos.x >= SIZE.x {
+                    p.pos.x -= SIZE.x;
                 }
                 if p.pos.y < RADIUS {
-                    p.pos.y += self.size.y;
-                } else if p.pos.y >= self.size.y {
-                    p.pos.y -= self.size.y;
+                    p.pos.y += SIZE.y;
+                } else if p.pos.y >= SIZE.y {
+                    p.pos.y -= SIZE.y;
                 }
             } else {
                 if p.pos.x <= RADIUS {
                     p.vel.x *= -1.0;
                     p.pos.x = RADIUS;
-                } else if p.pos.x >= self.size.x - RADIUS {
+                } else if p.pos.x >= SIZE.x - RADIUS {
                     p.vel.x *= -1.0;
-                    p.pos.x = self.size.x - RADIUS;
+                    p.pos.x = SIZE.x - RADIUS;
                 }
 
                 if p.pos.y <= RADIUS {
                     p.vel.y *= -1.0;
                     p.pos.y = RADIUS;
-                } else if p.pos.y >= self.size.y - RADIUS {
+                } else if p.pos.y >= SIZE.y - RADIUS {
                     p.vel.y *= -1.0;
-                    p.pos.y = self.size.y - RADIUS;
+                    p.pos.y = SIZE.y - RADIUS;
                 }
             }
         }
-    }
-
-    pub fn resize(&mut self, size: Vector) {
-        let x_mult = size.x / self.size.x;
-        let y_mult = size.y / self.size.y;
-
-        for p in self.particles.iter_mut() {
-            p.pos.x *= x_mult;
-            p.pos.y *= y_mult;
-        }
-
-        self.size = size;
     }
 }

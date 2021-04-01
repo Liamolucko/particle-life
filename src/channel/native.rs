@@ -9,7 +9,6 @@ use futures::Sink;
 use futures::SinkExt;
 use futures::Stream;
 use futures::StreamExt;
-use quicksilver::geom::Vector;
 
 use crate::particle::Particle;
 
@@ -36,7 +35,7 @@ impl StepChannel {
             futures::executor::block_on(async {
                 use crate::universe::Universe;
 
-                let mut universe = Universe::new(Vector::ZERO);
+                let mut universe = Universe::new();
                 let mut round = 0;
 
                 loop {
@@ -48,10 +47,6 @@ impl StepChannel {
                         _ = async {
                             while let Some(cmd) = cmd_rx.next().await {
                                 match cmd {
-                                    Command::Resize(size) => {
-                                        universe.resize(size);
-                                        round += 1;
-                                    },
                                     Command::Seed(settings) => {
                                         universe.seed(&settings);
                                         round += 1;
@@ -109,10 +104,7 @@ impl Sink<Command> for StepChannel {
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Command) -> Result<(), Self::Error> {
-        if matches!(
-            item,
-            Command::Seed(_) | Command::RandomizeParticles | Command::Resize(_)
-        ) {
+        if matches!(item, Command::Seed(_) | Command::RandomizeParticles) {
             self.round += 1;
             while let Ok(_) = self.rx.try_next() {} // clear the buffer of outdated messages
         }

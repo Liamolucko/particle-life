@@ -38,8 +38,7 @@ pub fn run_worker() {
     let global: DedicatedWorkerGlobalScope = js_sys::global().dyn_into().unwrap();
     let global2 = global.clone();
 
-    // This'll be immediately resized to the actual size
-    let mut universe = Universe::new(Vector::ZERO);
+    let mut universe = Universe::new();
     let mut round = 0;
 
     let closure = Closure::wrap(Box::new(move |msg: MessageEvent| {
@@ -47,10 +46,6 @@ pub fn run_worker() {
         let cmd: Command = serde_cbor::from_slice(&buf.to_vec()).unwrap();
 
         match cmd {
-            Command::Resize(size) => {
-                universe.resize(size);
-                round += 1;
-            }
             Command::Seed(settings) => {
                 universe.seed(&settings);
                 round += 1;
