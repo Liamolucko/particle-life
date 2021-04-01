@@ -398,7 +398,7 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
                     particle_hist.pop_front();
                 }
                 particle_hist.push_back(particles);
-            } else if particle_hist.len() == 0 {
+            } else if particle_hist.is_empty() {
                 #[cfg(target_arch = "wasm32")]
                 chan.req();
                 // It's better to delay the frame than display a black screen
@@ -452,9 +452,7 @@ pub async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<
         } else {
             // The furthest towards the top left the camera should be able to move (world space)
             let top_left_pos = window.size() * (0.5 / zoom);
-            cam_pos = cam_pos
-                .min(universe::SIZE - top_left_pos)
-                .max(top_left_pos);
+            cam_pos = cam_pos.min(universe::SIZE - top_left_pos).max(top_left_pos);
         }
 
         for (opacity, particles) in particle_hist.iter().enumerate() {

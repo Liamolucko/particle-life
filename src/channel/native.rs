@@ -106,7 +106,7 @@ impl Sink<Command> for StepChannel {
     fn start_send(mut self: Pin<&mut Self>, item: Command) -> Result<(), Self::Error> {
         if matches!(item, Command::Seed(_) | Command::RandomizeParticles) {
             self.round += 1;
-            while let Ok(_) = self.rx.try_next() {} // clear the buffer of outdated messages
+            while self.rx.try_next().is_ok() {} // clear the buffer of outdated messages
         }
         self.tx.start_send(item)
     }

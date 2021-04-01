@@ -13,7 +13,10 @@ pub const RADIUS: f32 = 5.0;
 pub const DIAMETER: f32 = RADIUS * 2.0;
 pub const R_SMOOTH: f32 = 2.0;
 
-pub const SIZE: Vector = Vector { x: 1600.0, y: 900.0 };
+pub const SIZE: Vector = Vector {
+    x: 1600.0,
+    y: 900.0,
+};
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
 pub struct Settings {
