@@ -4,6 +4,7 @@ set -ex
 
 # Nightly is needed for wasm threading
 rustup override set nightly
+rustup target add wasm32-unknown-unknown
 rustup component add rust-src
 
 cargo install wasm-bindgen-cli --vers=0.2.74
