@@ -4,6 +4,7 @@ set -ex
 
 # Nightly is needed for wasm threading
 rustup override set nightly
+rustup component add rust-src
 
 # A couple of steps are necessary to get this build working which makes it slightly
 # nonstandard compared to most other builds.
