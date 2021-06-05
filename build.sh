@@ -6,6 +6,8 @@ set -ex
 rustup override set nightly
 rustup component add rust-src
 
+cargo install wasm-bindgen-cli --vers=0.2.74
+
 # A couple of steps are necessary to get this build working which makes it slightly
 # nonstandard compared to most other builds.
 #
