@@ -1,6 +1,9 @@
 use crate::app;
 use crate::channel::Command;
+use crate::particle::Particle;
 use crate::universe::Universe;
+use futures::channel::mpsc::Receiver;
+use futures::channel::mpsc::Sender;
 use js_sys::Uint8Array;
 use quicksilver::geom::Vector;
 use wasm_bindgen::prelude::Closure;
@@ -10,7 +13,6 @@ use wasm_bindgen::JsValue;
 use web_sys::DedicatedWorkerGlobalScope;
 use web_sys::MessageEvent;
 
-#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn run() {
     console_error_panic_hook::set_once();
@@ -81,4 +83,13 @@ pub fn run_worker() {
     global2.post_message(&JsValue::TRUE).unwrap();
 
     closure.forget();
+}
+
+#[wasm_bindgen]
+pub fn run_worker_sab(p_tx: *mut Sender<(u32, Vec<Particle>)>, cmd_rx: *mut Receiver<Command>) {
+    console_error_panic_hook::set_once();
+
+    let p_tx = unsafe { *Box::from_raw(p_tx) };
+    let cmd_rx = unsafe { *Box::from_raw(cmd_rx) };
+    futures::executor::block_on(crate::channel::native::run_worker(p_tx, cmd_rx))
 }

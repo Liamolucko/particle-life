@@ -22,11 +22,22 @@
 </head>
 
 <body>
-  <script src="./pkg/particle_life.js"></script>
   <script>
-    wasm_bindgen("./pkg/particle_life_bg.wasm").then(() => {
-      wasm_bindgen.run();
-    });
+    const script = document.createElement("script");
+    if ("SharedArrayBuffer" in globalThis) {
+      script.src = "./sab/particle_life.js";
+      script.onload = async () => {
+        await wasm_bindgen("./sab/particle_life_bg.wasm");
+        wasm_bindgen.run();
+      };
+    } else {
+      script.src = "./no-sab/particle_life.js";
+      script.onload = async () => {
+        await wasm_bindgen("./no-sab/particle_life_bg.wasm");
+        wasm_bindgen.run();
+      };
+    }
+    document.body.appendChild(script)
   </script>
 </body>
 
