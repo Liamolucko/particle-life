@@ -2,6 +2,9 @@
 
 set -ex
 
+# Nightly is needed for wasm threading
+rustup override set nightly
+
 # A couple of steps are necessary to get this build working which makes it slightly
 # nonstandard compared to most other builds.
 #
@@ -27,4 +30,3 @@ cargo build --target wasm32-unknown-unknown --release
 wasm-bindgen target/wasm32-unknown-unknown/release/particle_life.wasm \
   --out-dir no-sab \
   --target no-modules
-  
