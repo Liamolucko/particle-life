@@ -7,7 +7,7 @@ Particle Life is actually quite CPU intensive, meaning a JS implementation of it
 is bound to be slow. This uses WebAssembly to run as fast as possible, plus a
 few other optimisations since it's still not as fast as native code.
 
-It's hosted at https://liamolucko.github.io/particle-life.
+It's hosted at https://particle-life.netlify.app.
 
 ## Extra Features
 

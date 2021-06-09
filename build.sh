@@ -34,3 +34,9 @@ cargo build --target wasm32-unknown-unknown --release
 wasm-bindgen target/wasm32-unknown-unknown/release/particle_life.wasm \
   --out-dir no-sab \
   --target no-modules
+
+# Don't deploy the entire target folder
+cargo clean
+
+wasm-opt -O4 -g sab/particle_life_bg.wasm -o sab/particle_life_bg.wasm
+wasm-opt -O4 -g no-sab/particle_life_bg.wasm -o no-sab/particle_life_bg.wasm

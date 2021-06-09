@@ -6,6 +6,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Particle Life</title>
 
+  <link rel="preload" href="./worker.js" as="worker">
+  <link rel="preload" href="./sab/particle_life.js" as="script">
+  <link rel="preload" href="./no-sab/particle_life.js" as="script">
+  <link rel="preload" href="./sab/particle_life_bg.wasm" as="fetch" crossorigin>
+  <link rel="preload" href="./no-sab/particle_life_bg.wasm" as="fetch" crossorigin>
+
   <style>
     html,
     body {
