@@ -2,12 +2,14 @@
 
 set -ex
 
-# Nightly is needed for wasm threading
-rustup override set nightly
-rustup target add wasm32-unknown-unknown
-rustup component add rust-src
+if [[ $(wasm-bindgen --version) != "wasm-bindgen 0.2.74" ]]; then
+  cargo install wasm-bindgen-cli --force --vers=0.2.74
+fi
 
-cargo install wasm-bindgen-cli --vers=0.2.74
+if [[ ! command -v wasm-opt ]]; then
+  curl -L https://github.com/WebAssembly/binaryen/releases/download/version_101/binaryen-version_101-x86_64-linux.tar.gz | tar -xz
+  export PATH = "binaryen-version_101/bin:$PATH"
+fi
 
 # A couple of steps are necessary to get this build working which makes it slightly
 # nonstandard compared to most other builds.
@@ -38,5 +40,5 @@ wasm-bindgen target/wasm32-unknown-unknown/release/particle_life.wasm \
 # Don't deploy the entire target folder
 cargo clean
 
-wasm-opt -O4 -g sab/particle_life_bg.wasm -o sab/particle_life_bg.wasm
-wasm-opt -O4 -g no-sab/particle_life_bg.wasm -o no-sab/particle_life_bg.wasm
+wasm-opt -O4 sab/particle_life_bg.wasm -o sab/particle_life_bg.wasm
+wasm-opt -O4 no-sab/particle_life_bg.wasm -o no-sab/particle_life_bg.wasm
