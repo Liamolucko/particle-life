@@ -8,7 +8,7 @@ fi
 
 if ! command -v wasm-opt; then
   curl -L https://github.com/WebAssembly/binaryen/releases/download/version_101/binaryen-version_101-x86_64-linux.tar.gz | tar -xz
-  export PATH = "binaryen-version_101/bin:$PATH"
+  export PATH="binaryen-version_101/bin:$PATH"
 fi
 
 # A couple of steps are necessary to get this build working which makes it slightly
