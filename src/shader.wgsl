@@ -23,7 +23,7 @@ struct Settings {
     attractions: array<f32, 400>; // kinds * kinds = 200
 };
 
-[[group(0), binding(0)]] var<uniform> settings: Settings;
+[[group(1), binding(0)]] var<uniform> settings: Settings;
 
 struct Particle {
     [[location(0)]] pos: vec2<f32>;
@@ -81,18 +81,18 @@ struct Particles {
     particles: array<Particle>;
 };
 
-[[group(0), binding(1)]] var<storage, read> particles: Particles;
+[[group(0), binding(0)]] var<storage, read> in_particles: Particles;
 /// The buffer to write new velocities into.
-[[group(0), binding(2)]] var<storage, read_write> back_particles: Particles;
+[[group(0), binding(1)]] var<storage, read_write> out_particles: Particles;
 
 // Since the numbers of particles are always multiples of 100, the workgroup size is the size required for 100 particles.
 [[stage(compute), workgroup_size(100)]]
 fn update_velocity([[builtin(global_invocation_id)]] pos: vec3<u32>) {
     let i = pos.x;
 
-    let kind_a = particles.particles[i].kind;
+    let kind_a = in_particles.particles[i].kind;
 
-    let num_particles = arrayLength(&particles.particles);
+    let num_particles = arrayLength(&in_particles.particles);
 
     var force = vec2<f32>(0.0, 0.0);
 
@@ -101,14 +101,14 @@ fn update_velocity([[builtin(global_invocation_id)]] pos: vec3<u32>) {
             continue;
         }
 
-        let kind_b = particles.particles[j].kind;
+        let kind_b = in_particles.particles[j].kind;
 
         let attraction = settings.attractions[kind_a * kinds + kind_b];
 
         let symmetric_props = get_symmetric_props(kind_a, kind_b);
 
-        let pos1 = particles.particles[i].pos;
-        let pos2 = particles.particles[j].pos;
+        let pos1 = in_particles.particles[i].pos;
+        let pos2 = in_particles.particles[j].pos;
 
         // positions are in clip space, but everything else is in pixels, so scale this up.
         let delta = vec2<f32>((pos2.x - pos1.x) * settings.width, (pos2.y - pos1.y) * settings.height);
@@ -134,11 +134,11 @@ fn update_velocity([[builtin(global_invocation_id)]] pos: vec3<u32>) {
         force = force + (delta / dist) * magnitude;
     }
 
-    let new_vel = particles.particles[i].vel + force;
+    let new_vel = in_particles.particles[i].vel + force;
 
-    back_particles.particles[i].vel = new_vel;
+    out_particles.particles[i].vel = new_vel;
 
     let pos_change = vec2<f32>(new_vel.x / settings.width, new_vel.y / settings.height);
 
-    back_particles.particles[i].pos = particles.particles[i].pos + pos_change;
+    out_particles.particles[i].pos = in_particles.particles[i].pos + pos_change;
 }

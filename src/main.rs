@@ -1,7 +1,10 @@
 use std::f32::consts::TAU;
 use std::mem::size_of;
 use std::num::NonZeroU64;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Duration;
 
 use bytemuck::Pod;
 use bytemuck::Zeroable;
@@ -55,6 +58,9 @@ const MULTISAMPLE_COUNT: u32 = 4;
 /// The number of kinds of particles which are always generated.
 /// The `kinds` field of `Settings` then just specifies which are actually used.
 const KINDS: usize = 20;
+
+const STEPS_PER_SECOND: u64 = 300;
+const SLEEP_DURATION: Duration = Duration::from_nanos(1000000000 / STEPS_PER_SECOND);
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, Debug)]
@@ -247,12 +253,15 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         .await
         .expect("Failed to create device");
 
+    let device = Arc::new(device);
+    let queue = Arc::new(queue);
+
     // Load the shaders from disk
     let shader = device.create_shader_module(&include_wgsl!("shader.wgsl"));
 
     let swapchain_format = surface.get_preferred_format(&adapter).unwrap();
 
-    let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+    let settings_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
         label: None,
         entries: &[
             // settings
@@ -266,10 +275,27 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 visibility: ShaderStages::VERTEX | ShaderStages::COMPUTE,
                 count: None,
             },
-            // particles
+        ],
+    });
+
+    let particle_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[
+            // in_particles
             BindGroupLayoutEntry {
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new(size_of::<Particle>() as u64),
+                },
+                binding: 0,
+                visibility: ShaderStages::COMPUTE,
+                count: None,
+            },
+            // out_particles
+            BindGroupLayoutEntry {
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
                     min_binding_size: NonZeroU64::new(size_of::<Particle>() as u64),
                 },
@@ -277,22 +303,11 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 visibility: ShaderStages::COMPUTE,
                 count: None,
             },
-            // back_particles
-            BindGroupLayoutEntry {
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: NonZeroU64::new(size_of::<Particle>() as u64),
-                },
-                binding: 2,
-                visibility: ShaderStages::COMPUTE,
-                count: None,
-            },
         ],
     });
 
     let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-        bind_group_layouts: &[&bind_group_layout],
+        bind_group_layouts: &[&particle_bind_group_layout, &settings_bind_group_layout],
         ..Default::default()
     });
 
@@ -337,13 +352,11 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         module: &shader,
     });
 
-    let circle_points_buffer = device.create_buffer_init(
-        &wgpu::util::BufferInitDescriptor {
-            label: Some("Circle points buffer"),
-            contents: bytemuck::bytes_of(&circle_points(size.width, size.height)),
-            usage: BufferUsages::VERTEX | BufferUsages::MAP_WRITE,
-        },
-    );
+    let circle_points_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Circle points buffer"),
+        contents: bytemuck::bytes_of(&circle_points(size.width, size.height)),
+        usage: BufferUsages::VERTEX,
+    });
 
     let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Circle points index buffer"),
@@ -357,13 +370,12 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Particle buffer 1"),
             contents: bytemuck::cast_slice(&particles),
-            usage: BufferUsages::VERTEX | BufferUsages::STORAGE | BufferUsages::MAP_WRITE,
+            usage: BufferUsages::VERTEX | BufferUsages::STORAGE,
         }),
-        // Initialize the second buffer as well so that the kinds are correct.
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Particle buffer 2"),
             contents: bytemuck::cast_slice(&particles),
-            usage: BufferUsages::VERTEX | BufferUsages::STORAGE | BufferUsages::MAP_WRITE,
+            usage: BufferUsages::VERTEX | BufferUsages::STORAGE,
         }),
     ]);
 
@@ -372,50 +384,31 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     let settings_buffer = device.create_buffer_init(&BufferInitDescriptor {
         label: Some("Runtime settings buffer"),
         contents: bytemuck::bytes_of(&runtime_settings),
-        usage: BufferUsages::UNIFORM | BufferUsages::MAP_WRITE,
+        usage: BufferUsages::UNIFORM,
     });
 
-    // Create a bind group for each orientation of the particle buffers,
-    // and then make an iterator which swaps between them.
-    let bind_groups = [
+    let settings_bind_group = Arc::new(device.create_bind_group(&BindGroupDescriptor {
+        label: None,
+        layout: &settings_bind_group_layout,
+        entries: &[BindGroupEntry {
+            binding: 0,
+            resource: BindingResource::Buffer(BufferBinding {
+                buffer: &settings_buffer,
+                offset: 0,
+                size: None,
+            }),
+        }],
+    }));
+
+    let particle_bind_groups = Arc::new([
         device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &bind_group_layout,
+            layout: &particle_bind_group_layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: BindingResource::Buffer(BufferBinding {
-                        buffer: &settings_buffer,
-                        offset: 0,
-                        size: None,
-                    }),
-                },
-                BindGroupEntry {
-                    binding: 1,
                     resource: BindingResource::Buffer(BufferBinding {
                         buffer: &particle_buffers[0],
-                        offset: 0,
-                        size: None,
-                    }),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: BindingResource::Buffer(BufferBinding {
-                        buffer: &particle_buffers[1],
-                        offset: 0,
-                        size: None,
-                    }),
-                },
-            ],
-        }),
-        device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &bind_group_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: BindingResource::Buffer(BufferBinding {
-                        buffer: &settings_buffer,
                         offset: 0,
                         size: None,
                     }),
@@ -428,8 +421,22 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                         size: None,
                     }),
                 },
+            ],
+        }),
+        device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &particle_bind_group_layout,
+            entries: &[
                 BindGroupEntry {
-                    binding: 2,
+                    binding: 0,
+                    resource: BindingResource::Buffer(BufferBinding {
+                        buffer: &particle_buffers[1],
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                BindGroupEntry {
+                    binding: 1,
                     resource: BindingResource::Buffer(BufferBinding {
                         buffer: &particle_buffers[0],
                         offset: 0,
@@ -438,7 +445,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 },
             ],
         }),
-    ];
+    ]);
 
     let mut surface_config = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -450,18 +457,48 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     surface.configure(&device, &surface_config);
 
-    let mut step_number = 0;
+    let step_number = Arc::new(AtomicUsize::new(0));
 
     // Spawn a task which will regularly queue compute passes.
     {
+        let device = Arc::clone(&device);
+        let queue = Arc::clone(&queue);
+        let settings_bind_group = Arc::clone(&settings_bind_group);
+        let step_number = Arc::clone(&step_number);
+        let particle_bind_groups = Arc::clone(&particle_bind_groups);
 
+        spawn(async move {
+            loop {
+                let step_number = step_number.fetch_add(1, Ordering::Relaxed) + 1;
+
+                {
+                    let mut encoder = device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+                    {
+                        let mut cpass =
+                            encoder.begin_compute_pass(&ComputePassDescriptor { label: None });
+                        cpass.set_pipeline(&compute_pipeline);
+                        cpass.set_bind_group(1, &settings_bind_group, &[]);
+                        cpass.set_bind_group(0, &particle_bind_groups[step_number % 2], &[]);
+                        cpass.dispatch(settings.particles as u32 / 100, 1, 1);
+                    }
+
+                    // it's not the best practice to be submitting this often, but it's probably fineeeeee...
+                    queue.submit(Some(encoder.finish()));
+                }
+
+                // TODO: sleeping on wasm
+                tokio::time::sleep(SLEEP_DURATION).await;
+            }
+        });
     }
 
     event_loop.run(move |event, _, control_flow| {
         // Have the closure take ownership of the resources.
         // `event_loop.run` never returns, therefore we must do this to ensure
         // the resources are properly cleaned up.
-        let _ = (&instance, &adapter, &shader, &pipeline_layout);
+        let _ = (&instance, &adapter, &shader);
 
         *control_flow = ControlFlow::Poll;
         match event {
@@ -476,10 +513,18 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
                 // Update the resolution given to the GPU.
                 // The width/height starts at offset 8.
-                queue.write_buffer(&settings_buffer, 8, bytemuck::bytes_of(&[size.width as f32, size.height as f32]));
+                queue.write_buffer(
+                    &settings_buffer,
+                    8,
+                    bytemuck::bytes_of(&[size.width as f32, size.height as f32]),
+                );
 
                 // Update the circle points.
-                queue.write_buffer(&circle_points_buffer, 0, bytemuck::bytes_of(&circle_points(size.width, size.height)));
+                queue.write_buffer(
+                    &circle_points_buffer,
+                    0,
+                    bytemuck::bytes_of(&circle_points(size.width, size.height)),
+                );
             }
             Event::MainEventsCleared => {
                 device.poll(Maintain::Poll);
@@ -511,16 +556,6 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 let mut encoder =
                     device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
-                let bind_group = &bind_groups[step_number % 2];
-
-                {
-                    let mut cpass =
-                        encoder.begin_compute_pass(&ComputePassDescriptor { label: None });
-                    cpass.set_pipeline(&compute_pipeline);
-                    cpass.set_bind_group(0, &bind_group, &[]);
-                    cpass.dispatch(settings.particles as u32 / 100, 1, 1);
-                }
-
                 {
                     let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: None,
@@ -535,8 +570,13 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                         depth_stencil_attachment: None,
                     });
                     rpass.set_pipeline(&render_pipeline);
-                    rpass.set_bind_group(0, &bind_group, &[]);
-                    rpass.set_vertex_buffer(0, particle_buffers[step_number % 2].slice(..));
+
+                    let step_number = step_number.load(Ordering::Relaxed) % 2;
+
+                    // this bind group isn't used but because it's the first one i need it to satisfy the layout. TODO get rid of it; probably split up shaders
+                    rpass.set_bind_group(0, &particle_bind_groups[step_number], &[]);
+                    rpass.set_bind_group(1, &settings_bind_group, &[]);
+                    rpass.set_vertex_buffer(0, particle_buffers[step_number].slice(..));
                     rpass.set_vertex_buffer(1, circle_points_buffer.slice(..));
                     rpass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
                     rpass.draw_indexed(
@@ -549,10 +589,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 queue.submit(Some(encoder.finish()));
 
                 //TODO: vsync and all that
-                // std::thread::sleep(std::time::Duration::from_millis(16));
-
-
-                step_number += 1;
+                std::thread::sleep(std::time::Duration::from_millis(16));
             }
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
