@@ -1,10 +1,16 @@
 use std::f32::consts::TAU;
-use std::mem;
 use std::mem::size_of;
 use std::num::NonZeroU64;
+use std::sync::Arc;
+use std::task::Context;
 
 use bytemuck::Pod;
 use bytemuck::Zeroable;
+use futures::task::noop_waker_ref;
+use futures::FutureExt;
+use palette::Hsv;
+use palette::IntoColor;
+use palette::Srgb;
 use rand::rngs::OsRng;
 use rand::Rng;
 use rand_distr::Distribution;
@@ -26,6 +32,8 @@ use wgpu::BufferUsages;
 use wgpu::ComputePassDescriptor;
 use wgpu::ComputePipelineDescriptor;
 use wgpu::Limits;
+use wgpu::Maintain;
+use wgpu::MapMode;
 use wgpu::PipelineLayoutDescriptor;
 use wgpu::ShaderStages;
 use wgpu::TextureUsages;
@@ -35,11 +43,13 @@ use winit::event_loop::ControlFlow;
 use winit::event_loop::EventLoop;
 use winit::window::Window;
 
-use crate::kinds::ParticleKinds;
-use crate::kinds::SymmetricProperties;
+#[cfg(not(target_arch = "wasm32"))]
+use tokio::spawn;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_futures::spawn_local as spawn;
+
 use crate::settings::Settings;
 
-mod kinds;
 mod settings;
 
 const RADIUS: f32 = 10.0;
@@ -47,11 +57,17 @@ const DIAMETER: f32 = RADIUS * 2.0;
 const CIRCLE_POINTS: usize = 24;
 const MULTISAMPLE_COUNT: u32 = 4;
 
+/// The number of kinds of particles which are always generated.
+/// The `kinds` field of `Settings` then just specifies which are actually used.
+const KINDS: usize = 20;
+
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Pod, Zeroable, Debug)]
 struct Particle {
     pos: [f32; 2],
+    vel: [f32; 2],
     kind: u32,
+    padding: [u8; 4],
 }
 
 /// Returns some points around the edge of a circle, as well as a 0 at the end to use for the centre.
@@ -82,27 +98,134 @@ fn indices() -> [[u16; 3]; CIRCLE_POINTS + 1] {
     triangles
 }
 
-fn gen_random_particles<R: Rng>(
-    width: u32,
-    height: u32,
-    settings: Settings,
-    rng: &mut R,
-) -> Vec<Particle> {
+fn gen_random_particles<R: Rng>(settings: Settings, rng: &mut R) -> Vec<Particle> {
     let kinds = Uniform::new(0, settings.kinds as u32);
-    let x_dist = Uniform::new(width as f32 * 0.25, width as f32 * 0.75);
-    let y_dist = Uniform::new(height as f32 * 0.25, height as f32 * 0.75);
+    // This is in clip space, so it ranges from -1 to 1.
+    let pos_dist = Uniform::new(-0.5, 0.5);
+    let vel_dist = Normal::new(0.0, 0.2).unwrap();
 
     let mut particles = Vec::with_capacity(settings.particles);
     for _ in 0..settings.particles {
         particles.push(Particle {
             kind: kinds.sample(rng),
-            pos: [x_dist.sample(rng), y_dist.sample(rng)],
+            pos: [pos_dist.sample(rng), pos_dist.sample(rng)],
+            vel: [vel_dist.sample(rng), vel_dist.sample(rng)],
+
+            padding: [0; 4],
         })
     }
     particles
 }
 
+/// The symmetric properties of two kinds of particles.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct SymmetricProperties {
+    /// The distance below which particles begin to unconditionally repel each other.
+    pub repel_distance: f32,
+    /// The distance above which particles have no influence on each other.
+    pub influence_radius: f32,
+}
+
+// This is used instead of a plain [f32; 3] so that we can give it an alignment of 16, which vec3 has for some reason.
+#[repr(C, align(16))]
+#[derive(Pod, Zeroable, Clone, Copy, Default)]
+pub struct Color {
+    red: f32,
+    green: f32,
+    blue: f32,
+    // make an actual field for this padding, so that it's accepted by bytemuck.
+    padding: [u8; 4],
+}
+
+impl From<Srgb> for Color {
+    fn from(color: Srgb) -> Self {
+        Self {
+            red: color.red,
+            green: color.green,
+            blue: color.blue,
+            padding: [0; 4],
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Pod, Zeroable, Clone, Copy)]
+struct RuntimeSettings {
+    friction: f32,
+    // actually a bool, kinda
+    flat_force: u32,
+
+    width: f32,
+    height: f32,
+
+    colors: [Color; KINDS],
+    symmetric_props: [SymmetricProperties; KINDS * (KINDS + 1) / 2],
+    attractions: [f32; KINDS * KINDS],
+}
+
+impl RuntimeSettings {
+    fn generate<R: Rng>(settings: Settings, width: u32, height: u32, rng: &mut R) -> Self {
+        let mut this = Self {
+            friction: settings.friction,
+            flat_force: settings.flat_force as u32,
+
+            width: width as f32,
+            height: height as f32,
+
+            colors: [Color::default(); KINDS],
+            symmetric_props: [SymmetricProperties {
+                influence_radius: 0.0,
+                repel_distance: 0.0,
+            }; KINDS * (KINDS + 1) / 2],
+            attractions: [0.0; KINDS * KINDS],
+        };
+
+        // The angle between each color's hue.
+        let angle = 360.0 / KINDS as f32;
+
+        for i in 0..KINDS {
+            let value = if i % 2 == 0 { 0.5 } else { 1.0 };
+            let color: Srgb = Hsv::new(angle * i as f32, 1.0, value).into_color();
+            // this last element isn't alpha; it's just padding.
+            this.colors[i] = color.into();
+
+            for j in 0..KINDS {
+                let index = i * KINDS + j;
+                this.attractions[index] = if i == j {
+                    -f32::abs(settings.attraction_distr.sample(rng))
+                } else {
+                    settings.attraction_distr.sample(rng)
+                };
+
+                if j <= i {
+                    let repel_distance = if i == j {
+                        DIAMETER
+                    } else {
+                        settings.repel_distance_distr.sample(rng)
+                    };
+                    let mut influence_radius = settings.influence_radius_distr.sample(rng);
+                    if influence_radius < repel_distance {
+                        influence_radius = repel_distance;
+                    }
+
+                    let index = i * (i + 1) / 2 + j;
+
+                    this.symmetric_props[index] = SymmetricProperties {
+                        repel_distance,
+                        influence_radius,
+                    };
+                }
+            }
+        }
+
+        this
+    }
+}
+
 async fn run(event_loop: EventLoop<()>, window: Window) {
+    let settings = Settings::balanced();
+
     let size = window.inner_size();
     let instance = wgpu::Instance::new(wgpu::Backends::all() & !wgpu::Backends::BROWSER_WEBGPU);
     let surface = unsafe { instance.create_surface(&window) };
@@ -137,77 +260,37 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
         label: None,
         entries: &[
-            // colors
+            // settings
             BindGroupLayoutEntry {
                 ty: BindingType::Buffer {
-                    ty: BufferBindingType::Storage { read_only: true },
+                    ty: BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: NonZeroU64::new(size_of::<[f32; 3]>() as u64),
+                    min_binding_size: NonZeroU64::new(size_of::<RuntimeSettings>() as u64),
                 },
                 binding: 0,
-                // NOTE: the compute shader only uses the length of the array to check how many particles there are; should that just be provided separately?
                 visibility: ShaderStages::VERTEX | ShaderStages::COMPUTE,
-                // TODO: is this supposed to be Some? I'm not sure if it only applies to fixed-length arrays.
-                count: None,
-            },
-            // symmetric_properties
-            BindGroupLayoutEntry {
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: NonZeroU64::new(size_of::<SymmetricProperties>() as u64),
-                },
-                binding: 1,
-                visibility: ShaderStages::COMPUTE,
-                // TODO: is this supposed to be Some? I'm not sure if it only applies to fixed-length arrays.
-                count: None,
-            },
-            // attractions
-            BindGroupLayoutEntry {
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: NonZeroU64::new(size_of::<[f32; 2]>() as u64),
-                },
-                binding: 2,
-                visibility: ShaderStages::COMPUTE,
-                // TODO: is this supposed to be Some? I'm not sure if it only applies to fixed-length arrays.
-                count: None,
-            },
-            // velocities
-            BindGroupLayoutEntry {
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: NonZeroU64::new(size_of::<[f32; 2]>() as u64),
-                },
-                binding: 3,
-                visibility: ShaderStages::COMPUTE,
-                // TODO: is this supposed to be Some? I'm not sure if it only applies to fixed-length arrays.
-                count: None,
-            },
-            // back_velocities
-            BindGroupLayoutEntry {
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: NonZeroU64::new(size_of::<[f32; 2]>() as u64),
-                },
-                binding: 4,
-                visibility: ShaderStages::COMPUTE,
-                // TODO: is this supposed to be Some? I'm not sure if it only applies to fixed-length arrays.
                 count: None,
             },
             // particles
+            BindGroupLayoutEntry {
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new(size_of::<Particle>() as u64),
+                },
+                binding: 1,
+                visibility: ShaderStages::COMPUTE,
+                count: None,
+            },
+            // back_particles
             BindGroupLayoutEntry {
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
                     min_binding_size: NonZeroU64::new(size_of::<Particle>() as u64),
                 },
-                binding: 5,
+                binding: 2,
                 visibility: ShaderStages::COMPUTE,
-                // TODO: is this supposed to be Some? I'm not sure if it only applies to fixed-length arrays.
                 count: None,
             },
         ],
@@ -229,13 +312,13 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 wgpu::VertexBufferLayout {
                     array_stride: size_of::<Particle>() as u64,
                     step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x3],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Uint32],
                 },
                 // The circle points
                 wgpu::VertexBufferLayout {
                     array_stride: size_of::<[f32; 2]>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![2 => Float32x2],
+                    attributes: &wgpu::vertex_attr_array![3 => Float32x2],
                 },
             ],
         },
@@ -259,11 +342,14 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         module: &shader,
     });
 
-    let circle_points_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Circle points buffer"),
-        contents: bytemuck::bytes_of(&circle_points(size.width, size.height)),
-        usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
-    });
+    let circle_points_buffer = Arc::new(device.create_buffer_init(
+        &wgpu::util::BufferInitDescriptor {
+            label: Some("Circle points buffer"),
+            contents: bytemuck::bytes_of(&circle_points(size.width, size.height)),
+            usage: BufferUsages::VERTEX | BufferUsages::MAP_WRITE,
+        },
+    ));
+    let mut points_map_future = None;
 
     let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Circle points index buffer"),
@@ -271,113 +357,107 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         usage: BufferUsages::INDEX,
     });
 
-    let particles = gen_random_particles(size.width, size.height, Settings::balanced(), &mut OsRng);
+    let particles = gen_random_particles(settings, &mut OsRng);
 
-    let particle_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Particle buffer"),
-        contents: bytemuck::cast_slice(&particles),
-        usage: BufferUsages::VERTEX | BufferUsages::COPY_DST | BufferUsages::STORAGE,
-    });
+    let particle_buffers = [
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Particle buffer 1"),
+            contents: bytemuck::cast_slice(&particles),
+            usage: BufferUsages::VERTEX | BufferUsages::STORAGE | BufferUsages::MAP_WRITE,
+        }),
+        // Initialize the second buffer as well so that the kinds are correct.
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Particle buffer 2"),
+            contents: bytemuck::cast_slice(&particles),
+            usage: BufferUsages::VERTEX | BufferUsages::STORAGE | BufferUsages::MAP_WRITE,
+        }),
+    ];
 
-    let velocities = gen_random_velocities(Settings::balanced(), &mut OsRng);
+    let runtime_settings = RuntimeSettings::generate(settings, size.width, size.height, &mut OsRng);
 
-    let mut velocity_buffer = device.create_buffer_init(&BufferInitDescriptor {
-        label: Some("Velocity buffer 1"),
-        contents: bytemuck::cast_slice(&velocities),
-        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-    });
+    let settings_buffer = Arc::new(device.create_buffer_init(&BufferInitDescriptor {
+        label: Some("Runtime settings buffer"),
+        contents: bytemuck::bytes_of(&runtime_settings),
+        usage: BufferUsages::UNIFORM | BufferUsages::MAP_WRITE,
+    }));
+    let mut settings_map_future = None;
 
-    let mut back_velocity_buffer = device.create_buffer(&BufferDescriptor {
-        label: Some("Velocity buffer 2"),
-        mapped_at_creation: false,
-        size: (Settings::balanced().particles * size_of::<[f32; 2]>()) as u64,
-        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-    });
-
-    let particle_kinds = ParticleKinds::random(Settings::balanced(), &mut OsRng);
-
-    let color_buffer = device.create_buffer_init(&BufferInitDescriptor {
-        label: Some("Particle colors buffer"),
-        contents: bytemuck::cast_slice(&particle_kinds.colors),
-        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-    });
-
-    let attraction_buffer = device.create_buffer_init(&BufferInitDescriptor {
-        label: Some("Attractions buffer"),
-        contents: bytemuck::cast_slice(&particle_kinds.attractions),
-        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-    });
-
-    let symmetric_buffer = device.create_buffer_init(&BufferInitDescriptor {
-        label: Some("Symmetric properties buffer"),
-        contents: bytemuck::cast_slice(&particle_kinds.symmetric_properties),
-        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-    });
-
-    let bind_group = device.create_bind_group(&BindGroupDescriptor {
-        label: None,
-        layout: &bind_group_layout,
-        entries: &[
-            BindGroupEntry {
-                binding: 0,
-                resource: BindingResource::Buffer(BufferBinding {
-                    buffer: &color_buffer,
-                    offset: 0,
-                    size: None,
-                }),
-            },
-            BindGroupEntry {
-                binding: 1,
-                resource: BindingResource::Buffer(BufferBinding {
-                    buffer: &symmetric_buffer,
-                    offset: 0,
-                    size: None,
-                }),
-            },
-            BindGroupEntry {
-                binding: 2,
-                resource: BindingResource::Buffer(BufferBinding {
-                    buffer: &attraction_buffer,
-                    offset: 0,
-                    size: None,
-                }),
-            },
-            BindGroupEntry {
-                binding: 3,
-                resource: BindingResource::Buffer(BufferBinding {
-                    buffer: &velocity_buffer,
-                    offset: 0,
-                    size: None,
-                }),
-            },
-            BindGroupEntry {
-                binding: 4,
-                resource: BindingResource::Buffer(BufferBinding {
-                    buffer: &back_velocity_buffer,
-                    offset: 0,
-                    size: None,
-                }),
-            },
-            BindGroupEntry {
-                binding: 5,
-                resource: BindingResource::Buffer(BufferBinding {
-                    buffer: &particle_buffer,
-                    offset: 0,
-                    size: None,
-                }),
-            },
-        ],
-    });
+    // Create a bind group for each orientation of the particle buffers,
+    // and then make an iterator which swaps between them.
+    let bind_groups = [
+        device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::Buffer(BufferBinding {
+                        buffer: &settings_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::Buffer(BufferBinding {
+                        buffer: &particle_buffers[0],
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::Buffer(BufferBinding {
+                        buffer: &particle_buffers[1],
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+            ],
+        }),
+        device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::Buffer(BufferBinding {
+                        buffer: &settings_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::Buffer(BufferBinding {
+                        buffer: &particle_buffers[1],
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::Buffer(BufferBinding {
+                        buffer: &particle_buffers[0],
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+            ],
+        }),
+    ];
 
     let mut surface_config = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format: swapchain_format,
         width: size.width,
         height: size.height,
-        present_mode: wgpu::PresentMode::Fifo,
+        present_mode: wgpu::PresentMode::Mailbox,
     };
 
     surface.configure(&device, &surface_config);
+
+    let mut step_number = 0;
 
     event_loop.run(move |event, _, control_flow| {
         // Have the closure take ownership of the resources.
@@ -385,7 +465,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         // the resources are properly cleaned up.
         let _ = (&instance, &adapter, &shader, &pipeline_layout);
 
-        *control_flow = ControlFlow::Wait;
+        *control_flow = ControlFlow::Poll;
         match event {
             Event::WindowEvent {
                 event: WindowEvent::Resized(size),
@@ -395,8 +475,49 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 surface_config.width = size.width;
                 surface_config.height = size.height;
                 surface.configure(&device, &surface_config);
+
+                // Start mapping the buffers so we can update the resolution
+                if settings_map_future.is_none() {
+                    settings_map_future = Some(settings_buffer.slice(..).map_async(MapMode::Write));
+                }
+
+                if points_map_future.is_none() {
+                    points_map_future =
+                        Some(circle_points_buffer.slice(..).map_async(MapMode::Write));
+                }
             }
-            Event::RedrawRequested(_) => {
+            Event::MainEventsCleared => {
+                device.poll(Maintain::Poll);
+
+                // Try to finish updating resolutions if we started it.
+                let mut noop_cx = Context::from_waker(noop_waker_ref());
+
+                if let Some(fut) = &mut settings_map_future {
+                    if fut.poll_unpin(&mut noop_cx).is_ready() {
+                        settings_map_future = None;
+                        let mut view = settings_buffer.slice(..).get_mapped_range_mut();
+                        let settings: &mut RuntimeSettings = bytemuck::from_bytes_mut(&mut view);
+                        settings.width = surface_config.width as f32;
+                        settings.height = surface_config.height as f32;
+
+                        drop(view);
+                        settings_buffer.unmap();
+                    }
+                }
+
+                if let Some(fut) = &mut points_map_future {
+                    if fut.poll_unpin(&mut noop_cx).is_ready() {
+                        points_map_future = None;
+                        let mut view = circle_points_buffer.slice(..).get_mapped_range_mut();
+                        let points: &mut [[f32; 2]; CIRCLE_POINTS + 1] =
+                            bytemuck::from_bytes_mut(&mut view);
+                        *points = circle_points(surface_config.width, surface_config.height);
+
+                        drop(view);
+                        circle_points_buffer.unmap();
+                    }
+                }
+
                 let frame = surface
                     .get_current_frame()
                     .expect("Failed to acquire next swap chain texture")
@@ -424,12 +545,14 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 let mut encoder =
                     device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
+                let bind_group = &bind_groups[step_number % 2];
+
                 {
                     let mut cpass =
                         encoder.begin_compute_pass(&ComputePassDescriptor { label: None });
                     cpass.set_pipeline(&compute_pipeline);
                     cpass.set_bind_group(0, &bind_group, &[]);
-                    cpass.dispatch(Settings::balanced().particles as u32 / 100, 1, 1);
+                    cpass.dispatch(settings.particles as u32 / 100, 1, 1);
                 }
 
                 {
@@ -446,16 +569,23 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                         depth_stencil_attachment: None,
                     });
                     rpass.set_pipeline(&render_pipeline);
-                    rpass.set_vertex_buffer(0, particle_buffer.slice(..));
+                    rpass.set_bind_group(0, &bind_group, &[]);
+                    rpass.set_vertex_buffer(0, particle_buffers[step_number % 2].slice(..));
                     rpass.set_vertex_buffer(1, circle_points_buffer.slice(..));
                     rpass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-                    rpass.draw_indexed(0..CIRCLE_POINTS as u32 * 3, 0, 0..2);
+                    rpass.draw_indexed(
+                        0..CIRCLE_POINTS as u32 * 3,
+                        0,
+                        0..settings.particles as u32,
+                    );
                 }
 
                 queue.submit(Some(encoder.finish()));
 
-                // swap the velocities around for next time
-                mem::swap(&mut velocity_buffer, &mut back_velocity_buffer);
+                //TODO: vsync and all that
+                std::thread::sleep(std::time::Duration::from_millis(16));
+
+                step_number += 1;
             }
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
@@ -466,30 +596,25 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     });
 }
 
-fn gen_random_velocities(settings: Settings, rng: &mut OsRng) -> Vec<[f32; 2]> {
-    let dist = Normal::new(0.0, 0.2).unwrap();
-
-    let mut velocities = Vec::with_capacity(settings.particles);
-    for _ in 0..settings.particles {
-        velocities.push([dist.sample(rng), dist.sample(rng)]);
-    }
-    velocities
-}
-
 fn main() {
     let event_loop = EventLoop::new();
-    let window = winit::window::Window::new(&event_loop).unwrap();
+    let window = Window::new(&event_loop).unwrap();
+
     #[cfg(not(target_arch = "wasm32"))]
     {
         env_logger::init();
-        // Temporarily avoid srgb formats for the swapchain on the web
-        pollster::block_on(run(event_loop, window));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(run(event_loop, window));
     }
     #[cfg(target_arch = "wasm32")]
     {
-        std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-        console_log::init().expect("could not initialize logger");
         use winit::platform::web::WindowExtWebSys;
+
+        console_error_panic_hook::init_once();
+        console_log::init().expect("could not initialize logger");
+
         // On wasm, append the canvas to the document body
         web_sys::window()
             .and_then(|win| win.document())
@@ -499,6 +624,7 @@ fn main() {
                     .ok()
             })
             .expect("couldn't append canvas to document body");
+
         wasm_bindgen_futures::spawn_local(run(event_loop, window));
     }
 }

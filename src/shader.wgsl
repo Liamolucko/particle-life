@@ -1,36 +1,4 @@
-struct Particle {
-    [[location(0)]] pos: vec2<f32>;
-    [[location(1)]] kind: u32;
-};
-
-// Group 0 is the stuff which is used by rendering; group 1 is only used by the compute shader.
-
-/// A pointless wrapper struct which is only needed because global variables have to have the [[block]] attribute.
-[[block]]
-struct Colors {
-    colors: array<vec3<f32>>;
-};
-
-/// The colors of each particle kind.
-[[group(0), binding(0)]] var<storage> colors: Colors;
-
-struct VertexOutput {
-    [[builtin(position)]] pos: vec4<f32>;
-    [[location(0)]] color: vec3<f32>;
-};
-
-[[stage(vertex)]]
-fn vs_main(particle: Particle, [[location(2)]] vertex: vec2<f32>) -> VertexOutput {
-    var out: VertexOutput;
-    out.pos = vec4<f32>(particle.pos + vertex, 0.0, 1.0);
-    out.color = colors.colors[particle.kind];
-    return out;
-}
-
-[[stage(fragment)]]
-fn fs_main([[location(0)]] color: vec3<f32>) -> [[location(0)]] vec4<f32> {
-    return vec4<f32>(color, 1.0);
-}
+let kinds: u32 = 20u;
 
 /// The symmetric properties of two kinds of particles.
 struct SymmetricProperties {
@@ -41,13 +9,46 @@ struct SymmetricProperties {
 };
 
 [[block]]
-struct SymmetricPropsStore {
-    properties: array<SymmetricProperties>;
+struct Settings {
+    friction: f32;
+    // we can't use a boolean because spir-v doesn't actually define how it's represented for some reason.
+    // so, this is either 0 or 1.
+    flat_force: u32;
+
+    width: f32;
+    height: f32;
+
+    colors: array<vec3<f32>, kinds>;
+    symmetric_props: array<SymmetricProperties, 210>; // kinds * (kinds + 1) / 2 = 210
+    attractions: array<f32, 400>; // kinds * kinds = 200
 };
 
-/// The symmetric properties of each particle.
-/// This is indexed in a fancy 'triangular' fashion which means each pair's properties are only stored once.
-[[group(1), binding(1)]] var<storage> symmetric_props: SymmetricPropsStore;
+[[group(0), binding(0)]] var<uniform> settings: Settings;
+
+struct Particle {
+    [[location(0)]] pos: vec2<f32>;
+    [[location(1)]] vel: vec2<f32>;
+    [[location(2)]] kind: u32;
+};
+
+struct VertexOutput {
+    [[builtin(position)]] pos: vec4<f32>;
+    [[location(0)]] color: vec3<f32>;
+};
+
+[[stage(vertex)]]
+fn vs_main(particle: Particle, [[location(3)]] vertex: vec2<f32>) -> VertexOutput {
+    var out: VertexOutput;
+    out.pos = vec4<f32>(particle.pos + vertex, 0.0, 1.0);
+    out.color = settings.colors[particle.kind];
+    return out;
+}
+
+[[stage(fragment)]]
+fn fs_main([[location(0)]] color: vec3<f32>) -> [[location(0)]] vec4<f32> {
+    return vec4<f32>(color, 1.0);
+}
+
 
 /// Get a pair of particles' symmetric properties.
 /// This is mainly here to decode the triangular indexing scheme.
@@ -72,43 +73,26 @@ fn get_symmetric_props(kind_a: u32, kind_b: u32) -> SymmetricProperties {
         larger = kind_b;
     }
 
-    return symmetric_props.properties[larger * (larger + 1u) / 2u + smaller];
+    return settings.symmetric_props[larger * (larger + 1u) / 2u + smaller];
 }
-
-[[block]]
-struct Attractions {
-    attractions: array<f32>;
-};
-
-/// The attractions of every particle to every other particle.
-[[group(0), binding(2)]] var<storage> attractions: Attractions;
-
-[[block]]
-struct Velocities {
-    velocities: array<vec2<f32>>;
-};
-
-[[group(0), binding(3)]] var<storage, read> velocities: Velocities;
-/// The buffer to write new velocities into.
-[[group(0), binding(4)]] var<storage, read_write> back_velocities: Velocities;
 
 [[block]]
 struct Particles {
     particles: array<Particle>;
 };
 
-[[group(0), binding(5)]] var<storage, read_write> particles: Particles;
+[[group(0), binding(1)]] var<storage, read> particles: Particles;
+/// The buffer to write new velocities into.
+[[group(0), binding(2)]] var<storage, read_write> back_particles: Particles;
 
 // Since the numbers of particles are always multiples of 100, the workgroup size is the size required for 100 particles.
 [[stage(compute), workgroup_size(100)]]
 fn update_velocity([[builtin(global_invocation_id)]] pos: vec3<u32>) {
     let i = pos.x;
 
-    let part_a = &particles.particles[i];
-    let kind_a = *part_a.kind;
+    let kind_a = particles.particles[i].kind;
 
-    let num_particles = arrayLength(&velocities.velocities);
-    let num_kinds = arrayLength(&colors.colors);
+    let num_particles = arrayLength(&particles.particles);
 
     var force = vec2<f32>(0.0, 0.0);
 
@@ -117,14 +101,17 @@ fn update_velocity([[builtin(global_invocation_id)]] pos: vec3<u32>) {
             continue;
         }
 
-        let part_b = &particles.particles[j];
-        let kind_b = *part_b.kind;
+        let kind_b = particles.particles[j].kind;
 
-        let attraction = attractions.attractions[kind_a * num_kinds + kind_b];
+        let attraction = settings.attractions[kind_a * kinds + kind_b];
 
         let symmetric_props = get_symmetric_props(kind_a, kind_b);
 
-        let delta = *part_b.pos - *part_a.pos;
+        let pos1 = particles.particles[i].pos;
+        let pos2 = particles.particles[j].pos;
+
+        // positions are in clip space, but everything else is in pixels, so scale this up.
+        let delta = vec2<f32>((pos2.x - pos1.x) * settings.width, (pos2.y - pos1.y) * settings.height);
 
         let dist2 = delta.x * delta.x + delta.y * delta.y;
 
@@ -147,6 +134,11 @@ fn update_velocity([[builtin(global_invocation_id)]] pos: vec3<u32>) {
         force = force + (delta / dist) * magnitude;
     }
 
-    back_velocities.velocities[i] = back_velocities.velocities[i] + force;
-    part_a.pos = *part_a.pos + back_velocities.velocities[i];
+    let new_vel = particles.particles[i].vel + force;
+
+    back_particles.particles[i].vel = new_vel;
+
+    let pos_change = vec2<f32>(new_vel.x / settings.width, new_vel.y / settings.height);
+
+    back_particles.particles[i].pos = particles.particles[i].pos + pos_change;
 }
