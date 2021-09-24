@@ -2,12 +2,9 @@ use std::f32::consts::TAU;
 use std::mem::size_of;
 use std::num::NonZeroU64;
 use std::sync::Arc;
-use std::task::Context;
 
 use bytemuck::Pod;
 use bytemuck::Zeroable;
-use futures::task::noop_waker_ref;
-use futures::FutureExt;
 use palette::Hsv;
 use palette::IntoColor;
 use palette::Srgb;
@@ -27,13 +24,11 @@ use wgpu::BindingResource;
 use wgpu::BindingType;
 use wgpu::BufferBinding;
 use wgpu::BufferBindingType;
-use wgpu::BufferDescriptor;
 use wgpu::BufferUsages;
 use wgpu::ComputePassDescriptor;
 use wgpu::ComputePipelineDescriptor;
 use wgpu::Limits;
 use wgpu::Maintain;
-use wgpu::MapMode;
 use wgpu::PipelineLayoutDescriptor;
 use wgpu::ShaderStages;
 use wgpu::TextureUsages;
@@ -342,14 +337,13 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         module: &shader,
     });
 
-    let circle_points_buffer = Arc::new(device.create_buffer_init(
+    let circle_points_buffer = device.create_buffer_init(
         &wgpu::util::BufferInitDescriptor {
             label: Some("Circle points buffer"),
             contents: bytemuck::bytes_of(&circle_points(size.width, size.height)),
             usage: BufferUsages::VERTEX | BufferUsages::MAP_WRITE,
         },
-    ));
-    let mut points_map_future = None;
+    );
 
     let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Circle points index buffer"),
@@ -359,7 +353,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     let particles = gen_random_particles(settings, &mut OsRng);
 
-    let particle_buffers = [
+    let particle_buffers = Arc::new([
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Particle buffer 1"),
             contents: bytemuck::cast_slice(&particles),
@@ -371,16 +365,15 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             contents: bytemuck::cast_slice(&particles),
             usage: BufferUsages::VERTEX | BufferUsages::STORAGE | BufferUsages::MAP_WRITE,
         }),
-    ];
+    ]);
 
     let runtime_settings = RuntimeSettings::generate(settings, size.width, size.height, &mut OsRng);
 
-    let settings_buffer = Arc::new(device.create_buffer_init(&BufferInitDescriptor {
+    let settings_buffer = device.create_buffer_init(&BufferInitDescriptor {
         label: Some("Runtime settings buffer"),
         contents: bytemuck::bytes_of(&runtime_settings),
         usage: BufferUsages::UNIFORM | BufferUsages::MAP_WRITE,
-    }));
-    let mut settings_map_future = None;
+    });
 
     // Create a bind group for each orientation of the particle buffers,
     // and then make an iterator which swaps between them.
@@ -452,12 +445,17 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         format: swapchain_format,
         width: size.width,
         height: size.height,
-        present_mode: wgpu::PresentMode::Mailbox,
+        present_mode: wgpu::PresentMode::Fifo,
     };
 
     surface.configure(&device, &surface_config);
 
     let mut step_number = 0;
+
+    // Spawn a task which will regularly queue compute passes.
+    {
+
+    }
 
     event_loop.run(move |event, _, control_flow| {
         // Have the closure take ownership of the resources.
@@ -476,47 +474,15 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 surface_config.height = size.height;
                 surface.configure(&device, &surface_config);
 
-                // Start mapping the buffers so we can update the resolution
-                if settings_map_future.is_none() {
-                    settings_map_future = Some(settings_buffer.slice(..).map_async(MapMode::Write));
-                }
+                // Update the resolution given to the GPU.
+                // The width/height starts at offset 8.
+                queue.write_buffer(&settings_buffer, 8, bytemuck::bytes_of(&[size.width as f32, size.height as f32]));
 
-                if points_map_future.is_none() {
-                    points_map_future =
-                        Some(circle_points_buffer.slice(..).map_async(MapMode::Write));
-                }
+                // Update the circle points.
+                queue.write_buffer(&circle_points_buffer, 0, bytemuck::bytes_of(&circle_points(size.width, size.height)));
             }
             Event::MainEventsCleared => {
                 device.poll(Maintain::Poll);
-
-                // Try to finish updating resolutions if we started it.
-                let mut noop_cx = Context::from_waker(noop_waker_ref());
-
-                if let Some(fut) = &mut settings_map_future {
-                    if fut.poll_unpin(&mut noop_cx).is_ready() {
-                        settings_map_future = None;
-                        let mut view = settings_buffer.slice(..).get_mapped_range_mut();
-                        let settings: &mut RuntimeSettings = bytemuck::from_bytes_mut(&mut view);
-                        settings.width = surface_config.width as f32;
-                        settings.height = surface_config.height as f32;
-
-                        drop(view);
-                        settings_buffer.unmap();
-                    }
-                }
-
-                if let Some(fut) = &mut points_map_future {
-                    if fut.poll_unpin(&mut noop_cx).is_ready() {
-                        points_map_future = None;
-                        let mut view = circle_points_buffer.slice(..).get_mapped_range_mut();
-                        let points: &mut [[f32; 2]; CIRCLE_POINTS + 1] =
-                            bytemuck::from_bytes_mut(&mut view);
-                        *points = circle_points(surface_config.width, surface_config.height);
-
-                        drop(view);
-                        circle_points_buffer.unmap();
-                    }
-                }
 
                 let frame = surface
                     .get_current_frame()
@@ -583,7 +549,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 queue.submit(Some(encoder.finish()));
 
                 //TODO: vsync and all that
-                std::thread::sleep(std::time::Duration::from_millis(16));
+                // std::thread::sleep(std::time::Duration::from_millis(16));
+
 
                 step_number += 1;
             }

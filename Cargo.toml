@@ -9,7 +9,6 @@ resolver = "2"
 [dependencies]
 bytemuck = { version = "1.7.2", features = ["derive", "min_const_generics"] }
 env_logger = "0.9.0"
-futures = "0.3.17"
 palette = { version = "0.6.0", features = ["bytemuck"] }
 rand = "0.8.4"
 rand_distr = "0.4.2"
