@@ -120,7 +120,7 @@ fn gen_random_particles<R: Rng>(settings: Settings, rng: &mut R) -> Vec<Particle
 
 /// The symmetric properties of two kinds of particles.
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Pod, Zeroable, Debug)]
 pub struct SymmetricProperties {
     /// The distance below which particles begin to unconditionally repel each other.
     pub repel_distance: f32,
@@ -130,7 +130,7 @@ pub struct SymmetricProperties {
 
 // This is used instead of a plain [f32; 3] so that we can give it an alignment of 16, which vec3 has for some reason.
 #[repr(C, align(16))]
-#[derive(Pod, Zeroable, Clone, Copy, Default)]
+#[derive(Pod, Zeroable, Clone, Copy, Default, Debug)]
 pub struct Color {
     red: f32,
     green: f32,
@@ -151,11 +151,12 @@ impl From<Srgb> for Color {
 }
 
 #[repr(C)]
-#[derive(Pod, Zeroable, Clone, Copy)]
+#[derive(Pod, Zeroable, Clone, Copy, Debug)]
 struct RuntimeSettings {
     friction: f32,
-    // actually a bool, kinda
-    flat_force: u32,
+    // 1 << 0: flat_force
+    // 1 << 1: wrap
+    flags: u32,
 
     width: f32,
     height: f32,
@@ -169,7 +170,7 @@ impl RuntimeSettings {
     fn generate<R: Rng>(settings: Settings, width: u32, height: u32, rng: &mut R) -> Self {
         let mut this = Self {
             friction: settings.friction,
-            flat_force: settings.flat_force as u32,
+            flags: 0b10 & settings.flat_force as u32,
 
             width: width as f32,
             height: height as f32,
@@ -183,12 +184,11 @@ impl RuntimeSettings {
         };
 
         // The angle between each color's hue.
-        let angle = 360.0 / KINDS as f32;
+        let angle = 360.0 / settings.kinds as f32;
 
         for i in 0..KINDS {
             let value = if i % 2 == 0 { 0.5 } else { 1.0 };
             let color: Srgb = Hsv::new(angle * i as f32, 1.0, value).into_color();
-            // this last element isn't alpha; it's just padding.
             this.colors[i] = color.into();
 
             for j in 0..KINDS {
@@ -203,7 +203,7 @@ impl RuntimeSettings {
                     let repel_distance = if i == j {
                         DIAMETER
                     } else {
-                        settings.repel_distance_distr.sample(rng)
+                        f32::max(settings.repel_distance_distr.sample(rng), DIAMETER)
                     };
                     let mut influence_radius = settings.influence_radius_distr.sample(rng);
                     if influence_radius < repel_distance {
@@ -225,7 +225,7 @@ impl RuntimeSettings {
 }
 
 async fn run(event_loop: EventLoop<()>, window: Window) {
-    let settings = Settings::balanced();
+    let settings = Settings::diversity();
 
     let size = window.inner_size();
     let instance = wgpu::Instance::new(wgpu::Backends::all() & !wgpu::Backends::BROWSER_WEBGPU);
@@ -355,7 +355,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     let circle_points_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Circle points buffer"),
         contents: bytemuck::bytes_of(&circle_points(size.width, size.height)),
-        usage: BufferUsages::VERTEX,
+        usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
     });
 
     let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -370,12 +370,12 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Particle buffer 1"),
             contents: bytemuck::cast_slice(&particles),
-            usage: BufferUsages::VERTEX | BufferUsages::STORAGE,
+            usage: BufferUsages::VERTEX | BufferUsages::STORAGE | BufferUsages::COPY_DST,
         }),
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Particle buffer 2"),
             contents: bytemuck::cast_slice(&particles),
-            usage: BufferUsages::VERTEX | BufferUsages::STORAGE,
+            usage: BufferUsages::VERTEX | BufferUsages::STORAGE | BufferUsages::COPY_DST,
         }),
     ]);
 
@@ -384,7 +384,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     let settings_buffer = device.create_buffer_init(&BufferInitDescriptor {
         label: Some("Runtime settings buffer"),
         contents: bytemuck::bytes_of(&runtime_settings),
-        usage: BufferUsages::UNIFORM,
+        usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
     });
 
     let settings_bind_group = Arc::new(device.create_bind_group(&BindGroupDescriptor {
