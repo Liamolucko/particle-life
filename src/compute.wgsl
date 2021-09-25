@@ -27,31 +27,13 @@ struct Settings {
     attractions: array<f32, 400>; // kinds * kinds = 200
 };
 
-[[group(1), binding(0)]] var<uniform> settings: Settings;
+[[group(0), binding(0)]] var<uniform> settings: Settings;
 
 struct Particle {
-    [[location(0)]] pos: vec2<f32>;
-    [[location(1)]] vel: vec2<f32>;
-    [[location(2)]] kind: u32;
+    pos: vec2<f32>;
+    vel: vec2<f32>;
+    kind: u32;
 };
-
-struct VertexOutput {
-    [[builtin(position)]] pos: vec4<f32>;
-    [[location(0)]] color: vec3<f32>;
-};
-
-[[stage(vertex)]]
-fn vs_main(particle: Particle, [[location(3)]] vertex: vec2<f32>) -> VertexOutput {
-    var out: VertexOutput;
-    out.pos = vec4<f32>(particle.pos + vertex, 0.0, 1.0);
-    out.color = settings.colors[particle.kind];
-    return out;
-}
-
-[[stage(fragment)]]
-fn fs_main([[location(0)]] color: vec3<f32>) -> [[location(0)]] vec4<f32> {
-    return vec4<f32>(color, 1.0);
-}
 
 
 /// Get a pair of particles' symmetric properties.
@@ -85,9 +67,8 @@ struct Particles {
     particles: array<Particle>;
 };
 
-[[group(0), binding(0)]] var<storage, read> in_particles: Particles;
-/// The buffer to write new velocities into.
-[[group(0), binding(1)]] var<storage, read_write> out_particles: Particles;
+[[group(1), binding(0)]] var<storage, read> in_particles: Particles;
+[[group(1), binding(1)]] var<storage, read_write> out_particles: Particles;
 
 // Since the numbers of particles are always multiples of 100, the workgroup size is the size required for 100 particles.
 [[stage(compute), workgroup_size(100)]]

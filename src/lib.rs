@@ -11,7 +11,6 @@ use rand::Rng;
 use rand_distr::Distribution;
 use rand_distr::Normal;
 use rand_distr::Uniform;
-use settings::Settings;
 use wgpu::include_wgsl;
 use wgpu::util::BufferInitDescriptor;
 use wgpu::util::DeviceExt;
@@ -23,10 +22,16 @@ use wgpu::BindGroupLayoutDescriptor;
 use wgpu::BindGroupLayoutEntry;
 use wgpu::BindingResource;
 use wgpu::BindingType;
+use wgpu::BlendComponent;
+use wgpu::BlendFactor;
+use wgpu::BlendOperation;
+use wgpu::BlendState;
 use wgpu::Buffer;
 use wgpu::BufferBinding;
 use wgpu::BufferBindingType;
 use wgpu::BufferUsages;
+use wgpu::ColorTargetState;
+use wgpu::ColorWrites;
 use wgpu::CommandEncoderDescriptor;
 use wgpu::ComputePassDescriptor;
 use wgpu::ComputePipeline;
@@ -56,9 +61,10 @@ use wgpu::VertexState;
 use wgpu::VertexStepMode;
 use winit::window::Window;
 
-use crate::settings::RuntimeSettings;
-
 mod settings;
+
+use settings::RuntimeSettings;
+use settings::Settings;
 
 const RADIUS: f32 = 10.0;
 const DIAMETER: f32 = RADIUS * 2.0;
@@ -68,6 +74,9 @@ const SAMPLE_COUNT: u32 = 4;
 
 const STEPS_PER_SECOND: u64 = 300;
 const STEP_PERIOD: Duration = Duration::from_nanos(1000000000 / STEPS_PER_SECOND);
+
+/// The number of past frames to use to create trails behind each particle.
+const TRAIL_LENGTH: usize = 10;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, Debug)]
@@ -148,6 +157,10 @@ fn generate_particles<R: Rng>(settings: Settings, rng: &mut R) -> Vec<Particle> 
     particles
 }
 
+fn opacities() -> impl Iterator<Item = f32> {
+    (1..=TRAIL_LENGTH).map(|n| n as f32 / TRAIL_LENGTH as f32)
+}
+
 pub struct State {
     pub device: Device,
     pub queue: Queue,
@@ -161,6 +174,7 @@ pub struct State {
 
     pub settings_bind_group: BindGroup,
     pub particle_bind_groups: Vec<BindGroup>,
+    pub opacity_bind_groups: Vec<BindGroup>,
 
     pub compute_pipeline: ComputePipeline,
     pub render_pipeline: RenderPipeline,
@@ -219,7 +233,7 @@ impl State {
 
         let particles = generate_particles(settings, &mut rng);
 
-        let particle_buffers: Vec<_> = (1..=2)
+        let particle_buffers: Vec<_> = (1..=TRAIL_LENGTH + 1)
             .map(|n| {
                 device.create_buffer_init(&BufferInitDescriptor {
                     label: Some(&format!("Particle buffer {}", n)),
@@ -240,6 +254,16 @@ impl State {
             contents: bytemuck::cast_slice(&circle_indices()),
             usage: BufferUsages::INDEX,
         });
+
+        let opacity_buffers: Vec<_> = opacities()
+            .map(|opacity| {
+                device.create_buffer_init(&BufferInitDescriptor {
+                    label: Some(&format!("{} opacity buffer", opacity)),
+                    contents: bytemuck::bytes_of(&opacity),
+                    usage: BufferUsages::UNIFORM,
+                })
+            })
+            .collect();
 
         let settings_bind_group_layout =
             device.create_bind_group_layout(&BindGroupLayoutDescriptor {
@@ -338,27 +362,67 @@ impl State {
             })
             .collect();
 
-        let shader = device.create_shader_module(&include_wgsl!("shader.wgsl"));
+        let opacity_bind_group_layout =
+            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: Some("Opacity bind group layout"),
+                entries: &[BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: NonZeroU64::new(4),
+                    },
+                    count: None,
+                }],
+            });
 
-        let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            bind_group_layouts: &[&particle_bind_group_layout, &settings_bind_group_layout],
+        let opacity_bind_groups: Vec<_> = opacities()
+            .enumerate()
+            .map(|(i, opacity)| {
+                device.create_bind_group(&BindGroupDescriptor {
+                    label: Some(&format!("{} opacity bind group", opacity)),
+                    layout: &opacity_bind_group_layout,
+                    entries: &[BindGroupEntry {
+                        binding: 0,
+                        resource: BindingResource::Buffer(BufferBinding {
+                            buffer: &opacity_buffers[i],
+                            offset: 0,
+                            size: None,
+                        }),
+                    }],
+                })
+            })
+            .collect();
+
+        let compute_shader = device.create_shader_module(&include_wgsl!("compute.wgsl"));
+
+        let compute_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            bind_group_layouts: &[&settings_bind_group_layout, &particle_bind_group_layout],
             ..Default::default()
         });
 
         let compute_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
             label: Some("Physics compute pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
+            layout: Some(&compute_pipeline_layout),
+            module: &compute_shader,
             entry_point: "update_velocity",
         });
 
         let swapchain_format = surface.get_preferred_format(&adapter).unwrap();
 
+        let render_shader = device.create_shader_module(&include_wgsl!("render.wgsl"));
+
+        let render_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            bind_group_layouts: &[&settings_bind_group_layout, &opacity_bind_group_layout],
+            ..Default::default()
+        });
+
         let render_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
             label: Some("Render pipeline"),
-            layout: Some(&pipeline_layout),
+            layout: Some(&render_pipeline_layout),
             vertex: VertexState {
-                module: &shader,
+                module: &render_shader,
                 entry_point: "vs_main",
                 buffers: &[
                     // Particle buffer
@@ -382,9 +446,26 @@ impl State {
                 ..Default::default()
             },
             fragment: Some(FragmentState {
-                module: &shader,
+                module: &render_shader,
                 entry_point: "fs_main",
-                targets: &[swapchain_format.into()]
+                targets: &[ColorTargetState {
+                    format: swapchain_format.into(),
+                    // some basic blending, to make the translucent trails work.
+                    // I don't really know what I'm doing when it comes to this, but this works ok.
+                    blend: Some(BlendState {
+                        color: BlendComponent {
+                            src_factor: BlendFactor::SrcAlpha,
+                            dst_factor: BlendFactor::OneMinusSrcAlpha,
+                            operation: BlendOperation::Add,
+                        },
+                        alpha: BlendComponent {
+                            src_factor: BlendFactor::One,
+                            dst_factor: BlendFactor::One,
+                            operation: BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: ColorWrites::ALL,
+                }]
             }),
         });
 
@@ -415,6 +496,7 @@ impl State {
 
             settings_bind_group,
             particle_bind_groups,
+            opacity_bind_groups,
 
             compute_pipeline,
             render_pipeline,
@@ -473,25 +555,26 @@ impl State {
             .device
             .create_command_encoder(&CommandEncoderDescriptor { label: None });
 
-        let mut steps = 0;
-        while self.last_frame + STEP_PERIOD < Instant::now() {
-            self.last_frame += STEP_PERIOD;
-            self.step_number += 1;
-            self.step_number %= 2;
-
-            let mut cpass = encoder.begin_compute_pass(&ComputePassDescriptor {
-                label: Some(&format!("Step {}", steps)),
-            });
+        {
+            let mut cpass = encoder.begin_compute_pass(&ComputePassDescriptor { label: None });
             cpass.set_pipeline(&self.compute_pipeline);
-            cpass.set_bind_group(1, &self.settings_bind_group, &[]);
-            cpass.set_bind_group(0, &self.particle_bind_groups[self.step_number], &[]);
-            cpass.dispatch(self.settings.particles as u32 / 100, 1, 1);
+            cpass.set_bind_group(0, &self.settings_bind_group, &[]);
 
-            steps += 1;
+            let mut steps = 0;
+            while self.last_frame + STEP_PERIOD < Instant::now() {
+                self.last_frame += STEP_PERIOD;
+                self.step_number += 1;
+                self.step_number %= TRAIL_LENGTH + 1;
 
-            if steps == 20 {
-                // It's not worth trying to catch up that far, just reset from here.
-                self.last_frame = Instant::now();
+                cpass.set_bind_group(1, &self.particle_bind_groups[self.step_number], &[]);
+                cpass.dispatch(self.settings.particles as u32 / 100, 1, 1);
+
+                steps += 1;
+
+                if steps == 20 {
+                    // It's not worth trying to catch up that far, just reset from here.
+                    self.last_frame = Instant::now();
+                }
             }
         }
 
@@ -510,20 +593,26 @@ impl State {
             });
             rpass.set_pipeline(&self.render_pipeline);
 
-            // this bind group isn't used but because it's the first one i need it to satisfy the layout. TODO get rid of it; probably split up shaders
-            rpass.set_bind_group(0, &self.particle_bind_groups[self.step_number], &[]);
-            rpass.set_bind_group(1, &self.settings_bind_group, &[]);
-            rpass.set_vertex_buffer(0, self.particle_buffers[self.step_number].slice(..));
+            rpass.set_bind_group(0, &self.settings_bind_group, &[]);
             rpass.set_vertex_buffer(1, self.circle_vertex_buffer.slice(..));
             rpass.set_index_buffer(
                 self.circle_index_buffer.slice(..),
                 wgpu::IndexFormat::Uint16,
             );
-            rpass.draw_indexed(
-                0..CIRCLE_POINTS as u32 * 3,
-                0,
-                0..self.settings.particles as u32,
-            );
+
+            for (j, i) in (self.step_number + 2..)
+                .map(|i| i % (TRAIL_LENGTH + 1))
+                .take(TRAIL_LENGTH)
+                .enumerate()
+            {
+                rpass.set_vertex_buffer(0, self.particle_buffers[i].slice(..));
+                rpass.set_bind_group(1, &self.opacity_bind_groups[j], &[]);
+                rpass.draw_indexed(
+                    0..CIRCLE_POINTS as u32 * 3,
+                    0,
+                    0..self.settings.particles as u32,
+                );
+            }
         }
 
         self.queue.submit(Some(encoder.finish()));
