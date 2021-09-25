@@ -1,5 +1,5 @@
+use particle_life::State;
 use wgpu::Maintain;
-use wgpu_test::State;
 use winit::event::Event;
 use winit::event::WindowEvent;
 use winit::event_loop::ControlFlow;
@@ -20,7 +20,7 @@ fn main() {
     {
         use winit::platform::web::WindowExtWebSys;
 
-        console_error_panic_hook::init_once();
+        console_error_panic_hook::set_once();
         console_log::init().expect("could not initialize logger");
 
         // On wasm, append the canvas to the document body

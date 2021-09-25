@@ -2,10 +2,10 @@ use std::f32::consts::TAU;
 use std::mem::size_of;
 use std::num::NonZeroU64;
 use std::time::Duration;
-use std::time::Instant;
 
 use bytemuck::Pod;
 use bytemuck::Zeroable;
+use instant::Instant;
 use rand::rngs::OsRng;
 use rand::Rng;
 use rand_distr::Distribution;
