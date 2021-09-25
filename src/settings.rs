@@ -1,5 +1,14 @@
+use bytemuck::Pod;
+use bytemuck::Zeroable;
+use palette::Hsv;
+use palette::IntoColor;
+use palette::Srgb;
+use rand::Rng;
+use rand_distr::Distribution;
 use rand_distr::Normal;
 use rand_distr::Uniform;
+
+use crate::DIAMETER;
 
 #[derive(Clone, Copy)]
 pub struct Settings {
@@ -134,5 +143,115 @@ impl Settings {
             friction: 0.01,
             flat_force: false,
         }
+    }
+}
+
+/// The symmetric properties of two kinds of particles.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable, Debug)]
+pub struct SymmetricProperties {
+    /// The distance below which particles begin to unconditionally repel each other.
+    pub repel_distance: f32,
+    /// The distance above which particles have no influence on each other.
+    pub influence_radius: f32,
+}
+
+// This is used instead of a plain [f32; 3] so that we can give it an alignment of 16, which vec3 has for some reason.
+#[repr(C, align(16))]
+#[derive(Pod, Zeroable, Clone, Copy, Default, Debug)]
+pub struct Color {
+    red: f32,
+    green: f32,
+    blue: f32,
+    // make an actual field for this padding, so that it's accepted by bytemuck.
+    padding: [u8; 4],
+}
+
+impl From<Srgb> for Color {
+    fn from(color: Srgb) -> Self {
+        Self {
+            red: color.red,
+            green: color.green,
+            blue: color.blue,
+            padding: [0; 4],
+        }
+    }
+}
+
+/// The number of kinds of particles which are always generated.
+/// The `kinds` field of `Settings` then just specifies which are actually used.
+const KINDS: usize = 20;
+
+#[repr(C)]
+#[derive(Pod, Zeroable, Clone, Copy, Debug)]
+pub struct RuntimeSettings {
+    friction: f32,
+    // 1 << 0: flat_force
+    // 1 << 1: wrap
+    flags: u32,
+
+    width: f32,
+    height: f32,
+
+    colors: [Color; KINDS],
+    symmetric_props: [SymmetricProperties; KINDS * (KINDS + 1) / 2],
+    attractions: [f32; KINDS * KINDS],
+}
+
+impl RuntimeSettings {
+    pub fn generate<R: Rng>(settings: Settings, width: u32, height: u32, rng: &mut R) -> Self {
+        let mut this = Self {
+            friction: settings.friction,
+            flags: 0b10 & settings.flat_force as u32,
+
+            width: width as f32,
+            height: height as f32,
+
+            colors: [Color::default(); KINDS],
+            symmetric_props: [SymmetricProperties {
+                influence_radius: 0.0,
+                repel_distance: 0.0,
+            }; KINDS * (KINDS + 1) / 2],
+            attractions: [0.0; KINDS * KINDS],
+        };
+
+        // The angle between each color's hue.
+        let angle = 360.0 / settings.kinds as f32;
+
+        for i in 0..KINDS {
+            let value = if i % 2 == 0 { 0.5 } else { 1.0 };
+            let color: Srgb = Hsv::new(angle * i as f32, 1.0, value).into_color();
+            this.colors[i] = color.into();
+
+            for j in 0..KINDS {
+                let index = i * KINDS + j;
+                this.attractions[index] = if i == j {
+                    -f32::abs(settings.attraction_distr.sample(rng))
+                } else {
+                    settings.attraction_distr.sample(rng)
+                };
+
+                if j <= i {
+                    let repel_distance = if i == j {
+                        DIAMETER
+                    } else {
+                        f32::max(settings.repel_distance_distr.sample(rng), DIAMETER)
+                    };
+                    let mut influence_radius = settings.influence_radius_distr.sample(rng);
+                    if influence_radius < repel_distance {
+                        influence_radius = repel_distance;
+                    }
+
+                    let index = i * (i + 1) / 2 + j;
+
+                    this.symmetric_props[index] = SymmetricProperties {
+                        repel_distance,
+                        influence_radius,
+                    };
+                }
+            }
+        }
+
+        this
     }
 }
