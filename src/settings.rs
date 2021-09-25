@@ -185,13 +185,13 @@ const KINDS: usize = 20;
 #[repr(C)]
 #[derive(Pod, Zeroable, Clone, Copy, Debug)]
 pub struct RuntimeSettings {
+    width: f32,
+    height: f32,
+
     friction: f32,
     // 1 << 0: flat_force
     // 1 << 1: wrap
     flags: u32,
-
-    width: f32,
-    height: f32,
 
     colors: [Color; KINDS],
     symmetric_props: [SymmetricProperties; KINDS * (KINDS + 1) / 2],
@@ -202,7 +202,7 @@ impl RuntimeSettings {
     pub fn generate<R: Rng>(settings: Settings, width: u32, height: u32, rng: &mut R) -> Self {
         let mut this = Self {
             friction: settings.friction,
-            flags: 0b10 & settings.flat_force as u32,
+            flags: settings.flat_force as u32,
 
             width: width as f32,
             height: height as f32,

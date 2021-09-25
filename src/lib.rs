@@ -61,7 +61,7 @@ use wgpu::VertexState;
 use wgpu::VertexStepMode;
 use winit::window::Window;
 
-mod settings;
+pub mod settings;
 
 use settings::RuntimeSettings;
 use settings::Settings;
@@ -71,9 +71,6 @@ const DIAMETER: f32 = RADIUS * 2.0;
 
 const CIRCLE_POINTS: usize = 24;
 const SAMPLE_COUNT: u32 = 4;
-
-const STEPS_PER_SECOND: u64 = 300;
-const STEP_PERIOD: Duration = Duration::from_nanos(1000000000 / STEPS_PER_SECOND);
 
 /// The number of past frames to use to create trails behind each particle.
 const TRAIL_LENGTH: usize = 10;
@@ -144,8 +141,10 @@ fn generate_particles<R: Rng>(settings: Settings, rng: &mut R) -> Vec<Particle> 
     let pos_dist = Uniform::new(-0.5, 0.5);
     let vel_dist = Normal::new(0.0, 0.2).unwrap();
 
-    let mut particles = Vec::with_capacity(settings.particles);
-    for _ in 0..settings.particles {
+    // Always generate 600 particles so we don't have to worry about resizing the particle buffers.
+    // The buffers will be sliced so that only the correct amount are actually used.
+    let mut particles = Vec::with_capacity(600);
+    for _ in 0..600 {
         particles.push(Particle {
             kind: kinds.sample(rng),
             pos: [pos_dist.sample(rng), pos_dist.sample(rng)],
@@ -186,6 +185,7 @@ pub struct State {
 
     pub last_frame: Instant,
     pub step_number: usize,
+    pub step_rate: u32,
 }
 
 impl State {
@@ -508,6 +508,7 @@ impl State {
 
             last_frame: Instant::now(),
             step_number: 0,
+            step_rate: 300,
         }
     }
 
@@ -527,10 +528,10 @@ impl State {
         self.multisampled_framebuffer =
             create_multisampled_framebuffer(&self.device, self.swapchain_format, width, height);
 
-        // Update the resolution in `RuntimeSettings`, which is at offset 8.
+        // Update the resolution in `RuntimeSettings`, which is at offset 0.
         self.queue.write_buffer(
             &self.settings_buffer,
-            8,
+            0,
             bytemuck::bytes_of(&[width as f32, height as f32]),
         );
 
@@ -560,9 +561,10 @@ impl State {
             cpass.set_pipeline(&self.compute_pipeline);
             cpass.set_bind_group(0, &self.settings_bind_group, &[]);
 
+            let step_period = Duration::from_secs(1) / self.step_rate;
             let mut steps = 0;
-            while self.last_frame + STEP_PERIOD < Instant::now() {
-                self.last_frame += STEP_PERIOD;
+            while self.last_frame + step_period < Instant::now() {
+                self.last_frame += step_period;
                 self.step_number += 1;
                 self.step_number %= TRAIL_LENGTH + 1;
 
@@ -605,7 +607,7 @@ impl State {
                 .take(TRAIL_LENGTH)
                 .enumerate()
             {
-                rpass.set_vertex_buffer(0, self.particle_buffers[i].slice(..));
+                rpass.set_vertex_buffer(0, self.particle_buffers[i].slice(..(self.settings.particles * size_of::<Particle>()) as u64));
                 rpass.set_bind_group(1, &self.opacity_bind_groups[j], &[]);
                 rpass.draw_indexed(
                     0..CIRCLE_POINTS as u32 * 3,
@@ -616,5 +618,38 @@ impl State {
         }
 
         self.queue.submit(Some(encoder.finish()));
+    }
+
+    pub fn set_wrap(&mut self, wrap: bool) {
+        let flags = (wrap as u32) << 1 | self.settings.flat_force as u32;
+        self.queue
+            .write_buffer(&self.settings_buffer, 12, bytemuck::bytes_of(&flags))
+    }
+
+    pub fn replace_settings<R: Rng>(&mut self, settings: Settings, rng: &mut R) {
+        self.settings = settings;
+
+        self.regenerate_kinds(rng);
+
+        self.regenerate_particles(rng);
+    }
+
+    pub fn regenerate_particles<R: Rng>(&mut self, rng: &mut R) {
+        let particles = generate_particles(self.settings, rng);
+
+        for buffer in self.particle_buffers.iter() {
+            self.queue
+                .write_buffer(&buffer, 0, bytemuck::cast_slice(&particles));
+        }
+    }
+
+    pub fn regenerate_kinds<R: Rng>(&mut self, rng: &mut R) {
+        // Use dummy width and height, and then just leave the existing values there by only updating the latter part.
+        let runtime_settings = RuntimeSettings::generate(self.settings, 0, 0, rng);
+        self.queue.write_buffer(
+            &self.settings_buffer,
+            8,
+            &bytemuck::bytes_of(&runtime_settings)[8..],
+        );
     }
 }

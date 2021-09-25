@@ -14,13 +14,14 @@ struct SymmetricProperties {
 
 [[block]]
 struct Settings {
+    // The width and height go first so that we don't need to bother replacing them when the actual settings are changed.
+    width: f32;
+    height: f32;
+
     friction: f32;
     // we can't use a boolean because spir-v doesn't actually define how it's represented for some reason.
     // so, this is either 0 or 1.
     flags: u32;
-
-    width: f32;
-    height: f32;
 
     colors: array<vec3<f32>, kinds>;
     symmetric_props: array<SymmetricProperties, 210>; // kinds * (kinds + 1) / 2 = 210
