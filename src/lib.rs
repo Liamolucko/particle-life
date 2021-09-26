@@ -69,7 +69,7 @@ use settings::Settings;
 const RADIUS: f32 = 10.0;
 const DIAMETER: f32 = RADIUS * 2.0;
 
-const CIRCLE_POINTS: usize = 20;
+const CIRCLE_POINTS: usize = 32;
 const SAMPLE_COUNT: u32 = 4;
 
 /// The number of past frames to use to create trails behind each particle.

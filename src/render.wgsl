@@ -1,6 +1,6 @@
 let kinds: u32 = 20u;
 let radius: f32 = 10.0;
-let num_circle_points: u32 = 20u;
+let num_circle_points: u32 = 32u;
 
 // let flat_force: u32 = 1u;
 let wrap: u32 = 2u;
