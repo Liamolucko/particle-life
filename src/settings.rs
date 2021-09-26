@@ -185,17 +185,22 @@ const KINDS: usize = 20;
 #[repr(C)]
 #[derive(Pod, Zeroable, Clone, Copy, Debug)]
 pub struct RuntimeSettings {
-    width: f32,
-    height: f32,
+    pub width: f32,
+    pub height: f32,
 
-    friction: f32,
+    pub friction: f32,
     // 1 << 0: flat_force
     // 1 << 1: wrap
-    flags: u32,
+    pub flags: u32,
 
-    colors: [Color; KINDS],
-    symmetric_props: [SymmetricProperties; KINDS * (KINDS + 1) / 2],
-    attractions: [f32; KINDS * KINDS],
+    pub colors: [Color; KINDS],
+    pub symmetric_props: [SymmetricProperties; KINDS * (KINDS + 1) / 2],
+    pub attractions: [f32; KINDS * KINDS],
+
+    pub camera: [f32; 2],
+    pub zoom: f32,
+
+    pub padding: u32,
 }
 
 impl RuntimeSettings {
@@ -213,6 +218,11 @@ impl RuntimeSettings {
                 repel_distance: 0.0,
             }; KINDS * (KINDS + 1) / 2],
             attractions: [0.0; KINDS * KINDS],
+
+            camera: [0.0, 0.0],
+            zoom: 1.0,
+
+            padding: 0,
         };
 
         // The angle between each color's hue.

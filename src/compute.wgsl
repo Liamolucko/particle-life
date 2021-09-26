@@ -26,6 +26,9 @@ struct Settings {
     colors: array<vec3<f32>, kinds>;
     symmetric_props: array<SymmetricProperties, 210>; // kinds * (kinds + 1) / 2 = 210
     attractions: array<f32, 400>; // kinds * kinds = 200
+
+    camera: vec2<f32>;
+    zoom: f32;
 };
 
 [[group(0), binding(0)]] var<uniform> settings: Settings;

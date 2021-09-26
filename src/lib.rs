@@ -186,6 +186,11 @@ pub struct State {
     pub last_frame: Instant,
     pub step_number: usize,
     pub step_rate: u32,
+
+    // It's easier to keep track of these externally than read them from GPU memory every time.
+    pub wrap: bool,
+    pub zoom: f32,
+    pub camera: [f32; 2],
 }
 
 impl State {
@@ -509,6 +514,10 @@ impl State {
             last_frame: Instant::now(),
             step_number: 0,
             step_rate: 300,
+
+            wrap: false,
+            zoom: 1.0,
+            camera: [0.0, 0.0],
         }
     }
 
@@ -620,8 +629,10 @@ impl State {
         self.queue.submit(Some(encoder.finish()));
     }
 
-    pub fn set_wrap(&mut self, wrap: bool) {
-        let flags = (wrap as u32) << 1 | self.settings.flat_force as u32;
+    pub fn toggle_wrap(&mut self) {
+        self.wrap = !self.wrap;
+
+        let flags = (self.wrap as u32) << 1 | self.settings.flat_force as u32;
         self.queue
             .write_buffer(&self.settings_buffer, 12, bytemuck::bytes_of(&flags))
     }
@@ -641,15 +652,54 @@ impl State {
             self.queue
                 .write_buffer(&buffer, 0, bytemuck::cast_slice(&particles));
         }
+
+        // Reset camera and zoom
+        self.camera = [0.0, 0.0];
+        self.zoom = 1.0;
+        self.set_camera();
     }
 
-    pub fn regenerate_kinds<R: Rng>(&mut self, rng: &mut R) {
+    fn regenerate_kinds<R: Rng>(&mut self, rng: &mut R) {
         // Use dummy width and height, and then just leave the existing values there by only updating the latter part.
-        let runtime_settings = RuntimeSettings::generate(self.settings, 0, 0, rng);
+        let mut runtime_settings = RuntimeSettings::generate(self.settings, 0, 0, rng);
+
+        // Set the wrap flag correctly
+        runtime_settings.flags |= (self.wrap as u32) << 1;
+
         self.queue.write_buffer(
             &self.settings_buffer,
             8,
             &bytemuck::bytes_of(&runtime_settings)[8..],
         );
+    }
+
+    /// Sets the camera zoom and position.
+    pub fn set_camera(&mut self) {
+        if !self.wrap {
+            let view_radius = 1.0 / self.zoom;
+
+            self.camera = [
+                self.camera[0].clamp(-1.0 + view_radius, 1.0 - view_radius),
+                self.camera[1].clamp(-1.0 + view_radius, 1.0 - view_radius),
+            ]
+        } else {
+            while self.camera[0] > 1.0 {
+                self.camera[0] -= 2.0;
+            }
+
+            while self.camera[0] < -1.0 {
+                self.camera[0] += 2.0;
+            }
+
+            while self.camera[1] > 1.0 {
+                self.camera[1] -= 2.0;
+            }
+
+            while self.camera[1] < -1.0 {
+                self.camera[1] += 2.0;
+            }
+        }
+
+        self.queue.write_buffer(&self.settings_buffer, size_of::<RuntimeSettings>() as u64 - 16, bytemuck::bytes_of(&[self.camera[0], self.camera[1], self.zoom]))
     }
 }

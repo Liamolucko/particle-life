@@ -1,5 +1,8 @@
 let kinds: u32 = 20u;
 
+let flat_force: u32 = 1u;
+let wrap: u32 = 2u;
+
 /// The symmetric properties of two kinds of particles.
 struct SymmetricProperties {
     /// The distance below which particles begin to unconditionally repel each other.
@@ -10,15 +13,18 @@ struct SymmetricProperties {
 
 [[block]]
 struct Settings {
-    friction: f32;
-    flags: u32;
-
     width: f32;
     height: f32;
+
+    friction: f32;
+    flags: u32;
 
     colors: array<vec3<f32>, kinds>;
     symmetric_props: array<SymmetricProperties, 210>; // kinds * (kinds + 1) / 2 = 210
     attractions: array<f32, 400>; // kinds * kinds = 200
+
+    camera: vec2<f32>;
+    zoom: f32;
 };
 
 /// Settings which differ between render passes.
@@ -43,8 +49,24 @@ struct VertexOutput {
 
 [[stage(vertex)]]
 fn vs_main(particle: Particle, [[location(3)]] vertex: vec2<f32>) -> VertexOutput {
+    var pos = settings.camera + particle.pos;
+
+    if ((settings.flags & wrap) != 0u) {
+        if (pos.x > 1.0) {
+            pos.x = pos.x - 2.0;
+        } elseif (pos.x < -1.0) {
+            pos.x = pos.x + 2.0;
+        }
+
+        if (pos.y > 1.0) {
+            pos.y = pos.y - 2.0;
+        } elseif (pos.y < -1.0) {
+            pos.y = pos.y + 2.0;
+        }
+    }
+
     var out: VertexOutput;
-    out.pos = vec4<f32>(particle.pos + vertex, 0.0, 1.0);
+    out.pos = vec4<f32>((pos + vertex) * settings.zoom, 0.0, 1.0);
     out.color = settings.colors[particle.kind];
     return out;
 }

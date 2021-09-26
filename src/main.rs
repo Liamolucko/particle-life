@@ -4,6 +4,7 @@ use rand::rngs::OsRng;
 use wgpu::Maintain;
 use winit::event::ElementState;
 use winit::event::Event;
+use winit::event::MouseScrollDelta;
 use winit::event::VirtualKeyCode;
 use winit::event::WindowEvent;
 use winit::event_loop::ControlFlow;
@@ -44,8 +45,8 @@ fn main() {
 async fn run(event_loop: EventLoop<()>, window: Window) {
     let mut state = State::new(&window).await;
 
-    // It's easier to just keep track of this externally than read the current value from the GPU buffer.
-    let mut wrap = false;
+    let mut mouse_pos = [0.0, 0.0];
+    let mut drag_cause = None;
 
     let mut rng = OsRng;
 
@@ -59,10 +60,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     if let Some(code) = input.virtual_keycode {
                         if input.state == ElementState::Pressed {
                             match code {
-                                VirtualKeyCode::W => {
-                                    wrap = !wrap;
-                                    state.set_wrap(wrap);
-                                }
+                                VirtualKeyCode::W => state.toggle_wrap(),
 
                                 VirtualKeyCode::B
                                 | VirtualKeyCode::C
@@ -89,8 +87,6 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                                     };
 
                                     state.replace_settings(settings, &mut rng);
-                                    // wrap gets reset to false when the settings are replaced, so manually fix it.
-                                    state.set_wrap(wrap);
                                 }
 
                                 VirtualKeyCode::Return => state.regenerate_particles(&mut rng),
@@ -102,6 +98,58 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                             // Space was lifted, set the step rate back to normal.
                             state.step_rate = 300;
                         }
+                    }
+                }
+                WindowEvent::MouseWheel { delta, .. } => {
+                    let scrolled = match delta {
+                        MouseScrollDelta::LineDelta(_, y) => y,
+                        MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 60.0,
+                    };
+
+                    let old_pos = [
+                        mouse_pos[0] - state.camera[0],
+                        mouse_pos[1] - state.camera[1],
+                    ];
+
+                    let old_zoom = state.zoom;
+
+                    state.zoom *= 1.1f32.powf(scrolled);
+                    state.zoom = state.zoom.clamp(1.0, 10.0);
+
+                    let new_pos = [
+                        mouse_pos[0] * old_zoom / state.zoom - state.camera[0],
+                        mouse_pos[1] * old_zoom / state.zoom - state.camera[1],
+                    ];
+
+                    let delta = [new_pos[0] - old_pos[0], new_pos[1] - old_pos[1]];
+
+                    state.camera = [state.camera[0] + delta[0], state.camera[1] + delta[1]];
+
+                    state.set_camera();
+                }
+                WindowEvent::CursorMoved { position, .. } => {
+                    let size = window.inner_size();
+
+                    let old_pos = mouse_pos;
+
+                    // Convert the position to clip space; it's easier to work with that way.
+                    mouse_pos = [
+                        (position.x as f32 * 2.0 / size.width as f32 - 1.0) / state.zoom,
+                        (position.y as f32 * -2.0 / size.height as f32 + 1.0) / state.zoom,
+                    ];
+
+                    if drag_cause.is_some() {
+                        // Drag the camera by however much the mouse position has changed.
+                        state.camera = [state.camera[0] + (mouse_pos[0] - old_pos[0]), state.camera[1] + (mouse_pos[1] - old_pos[1])];
+
+                        state.set_camera();
+                    }
+                }
+                WindowEvent::MouseInput { button, state, .. } => {
+                    if state == ElementState::Pressed && drag_cause.is_none() {
+                        drag_cause = Some(button);
+                    } else if state == ElementState::Released && drag_cause == Some(button) {
+                        drag_cause = None;
                     }
                 }
                 _ => {}
