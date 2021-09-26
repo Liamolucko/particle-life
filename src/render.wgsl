@@ -5,7 +5,7 @@ let num_circle_points: u32 = 32u;
 // let flat_force: u32 = 1u;
 let wrap: u32 = 2u;
 
-let frac_pi_20: f32 = 0.15707963267948966;
+let pi: f32 = 3.14159265358979323846264338327950288;
 
 /// The symmetric properties of two kinds of particles.
 struct SymmetricProperties {
@@ -59,6 +59,10 @@ struct VertexOutput {
 
 [[stage(vertex)]]
 fn vs_main(particle: Particle, [[builtin(vertex_index)]] idx: u32) -> VertexOutput {
+    // Half the angle between each line from the centre.
+    // This isn't a proper constant because WGSL won't let me do division there.
+    let half_circle_angle: f32 = pi / f32(num_circle_points);
+
     var pos = settings.camera + particle.pos;
 
     if ((settings.flags & wrap) != 0u) {
@@ -92,7 +96,7 @@ fn vs_main(particle: Particle, [[builtin(vertex_index)]] idx: u32) -> VertexOutp
         let clip_height = radius / settings.height;
 
         if (pos.x + clip_width > 1.0) {
-            let middle = pos.x + cos(frac_pi_20 * f32(2u * (idx / 3u) + 1u)) * clip_width;
+            let middle = pos.x + cos(half_circle_angle * f32(2u * (idx / 3u) + 1u)) * clip_width;
             if (middle > 1.0) {
                 if (idx % 3u == 0u) {
                     vertex.x = -1.0;
@@ -107,7 +111,7 @@ fn vs_main(particle: Particle, [[builtin(vertex_index)]] idx: u32) -> VertexOutp
                 }
             }
         } elseif (pos.x - clip_width < -1.0) {
-            let middle = pos.x + cos(frac_pi_20 * f32(2u * (idx / 3u) + 1u)) * clip_width;
+            let middle = pos.x + cos(half_circle_angle * f32(2u * (idx / 3u) + 1u)) * clip_width;
             if (middle < -1.0) {
                 if (idx % 3u == 0u) {
                     vertex.x = 1.0;
@@ -124,7 +128,7 @@ fn vs_main(particle: Particle, [[builtin(vertex_index)]] idx: u32) -> VertexOutp
         }
 
         if (pos.y + clip_height > 1.0) {
-            let middle = pos.y + sin(frac_pi_20 * f32(2u * (idx / 3u) + 1u)) * clip_height;
+            let middle = pos.y + sin(half_circle_angle * f32(2u * (idx / 3u) + 1u)) * clip_height;
             if (middle > 1.0) {
                 if (idx % 3u == 0u) {
                     vertex.y = -1.0;
@@ -139,7 +143,7 @@ fn vs_main(particle: Particle, [[builtin(vertex_index)]] idx: u32) -> VertexOutp
                 }
             }
         } elseif (pos.y - clip_height < -1.0) {
-            let middle = pos.y + sin(frac_pi_20 * f32(2u * (idx / 3u) + 1u)) * clip_height;
+            let middle = pos.y + sin(half_circle_angle * f32(2u * (idx / 3u) + 1u)) * clip_height;
             if (middle < -1.0) {
                 if (idx % 3u == 0u) {
                     vertex.y = 1.0;
