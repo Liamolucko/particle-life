@@ -69,7 +69,7 @@ use settings::Settings;
 const RADIUS: f32 = 10.0;
 const DIAMETER: f32 = RADIUS * 2.0;
 
-const CIRCLE_POINTS: usize = 24;
+const CIRCLE_POINTS: usize = 20;
 const SAMPLE_COUNT: u32 = 4;
 
 /// The number of past frames to use to create trails behind each particle.
@@ -84,32 +84,19 @@ struct Particle {
     padding: [u8; 4],
 }
 
-/// Returns some points around the edge of a circle, as well as a 0 at the end to use for the centre.
-fn circle_points(win_width: u32, win_height: u32) -> [[f32; 2]; CIRCLE_POINTS + 1] {
+/// Returns some points around the edge of a circle.
+fn circle_points(win_width: u32, win_height: u32) -> [[f32; 2]; CIRCLE_POINTS] {
     // We want 10px radius particles, so figure out what that maps to in clip space with this resolution.
     let x_size = RADIUS / win_width as f32;
     let y_size = RADIUS / win_height as f32;
 
-    let mut out = [[0.0; 2]; CIRCLE_POINTS + 1];
+    let mut out = [[0.0; 2]; CIRCLE_POINTS];
     for i in 0..CIRCLE_POINTS {
         let angle = (TAU / CIRCLE_POINTS as f32) * i as f32;
         out[i][0] = angle.cos() * x_size;
         out[i][1] = angle.sin() * y_size;
     }
     out
-}
-
-/// Generates the needed indices into `circle_points`.
-fn circle_indices() -> [[u16; 3]; CIRCLE_POINTS + 1] {
-    let mut triangles = [[0; 3]; CIRCLE_POINTS + 1];
-    for i in 0..CIRCLE_POINTS {
-        triangles[i] = [
-            CIRCLE_POINTS as u16,
-            i as u16,
-            (i as u16 + 1) % CIRCLE_POINTS as u16,
-        ];
-    }
-    triangles
 }
 
 fn create_multisampled_framebuffer(
@@ -167,10 +154,9 @@ pub struct State {
 
     pub settings_buffer: Buffer,
     pub particle_buffers: Vec<Buffer>,
-
     pub circle_vertex_buffer: Buffer,
-    pub circle_index_buffer: Buffer,
 
+    pub circle_bind_group: BindGroup,
     pub settings_bind_group: BindGroup,
     pub particle_bind_groups: Vec<BindGroup>,
     pub opacity_bind_groups: Vec<BindGroup>,
@@ -251,13 +237,7 @@ impl State {
         let circle_vertex_buffer = device.create_buffer_init(&BufferInitDescriptor {
             label: Some("Circle vertex buffer"),
             contents: bytemuck::cast_slice(&circle_points(size.width, size.height)),
-            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
-        });
-
-        let circle_index_buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("Circle index buffer"),
-            contents: bytemuck::cast_slice(&circle_indices()),
-            usage: BufferUsages::INDEX,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
         });
 
         let opacity_buffers: Vec<_> = opacities()
@@ -269,6 +249,34 @@ impl State {
                 })
             })
             .collect();
+
+        let circle_bind_group_layout =
+            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: Some("Circle vertex bind group layout"),
+                entries: &[BindGroupLayoutEntry {
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: NonZeroU64::new(8 * CIRCLE_POINTS as u64),
+                    },
+                    binding: 0,
+                    visibility: ShaderStages::VERTEX,
+                    count: None,
+                }],
+            });
+
+        let circle_bind_group = device.create_bind_group(&BindGroupDescriptor {
+            label: Some("Circle vertex bind group"),
+            layout: &circle_bind_group_layout,
+            entries: &[BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::Buffer(BufferBinding {
+                    buffer: &circle_vertex_buffer,
+                    offset: 0,
+                    size: None,
+                }),
+            }],
+        });
 
         let settings_bind_group_layout =
             device.create_bind_group_layout(&BindGroupLayoutDescriptor {
@@ -419,7 +427,11 @@ impl State {
         let render_shader = device.create_shader_module(&include_wgsl!("render.wgsl"));
 
         let render_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            bind_group_layouts: &[&settings_bind_group_layout, &opacity_bind_group_layout],
+            bind_group_layouts: &[
+                &circle_bind_group_layout,
+                &settings_bind_group_layout,
+                &opacity_bind_group_layout,
+            ],
             ..Default::default()
         });
 
@@ -436,12 +448,6 @@ impl State {
                         step_mode: VertexStepMode::Instance,
                         attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Uint32],
                     },
-                    // Circle vertex buffer
-                    VertexBufferLayout {
-                        array_stride: 8,
-                        step_mode: VertexStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![3 => Float32x2],
-                    }
                 ]
             },
             primitive: PrimitiveState ::default(),
@@ -495,10 +501,9 @@ impl State {
 
             settings_buffer,
             particle_buffers,
-
             circle_vertex_buffer,
-            circle_index_buffer,
 
+            circle_bind_group,
             settings_bind_group,
             particle_bind_groups,
             opacity_bind_groups,
@@ -604,23 +609,22 @@ impl State {
             });
             rpass.set_pipeline(&self.render_pipeline);
 
-            rpass.set_bind_group(0, &self.settings_bind_group, &[]);
-            rpass.set_vertex_buffer(1, self.circle_vertex_buffer.slice(..));
-            rpass.set_index_buffer(
-                self.circle_index_buffer.slice(..),
-                wgpu::IndexFormat::Uint16,
-            );
+            rpass.set_bind_group(0, &self.circle_bind_group, &[]);
+            rpass.set_bind_group(1, &self.settings_bind_group, &[]);
 
             for (j, i) in (self.step_number + 2..)
                 .map(|i| i % (TRAIL_LENGTH + 1))
                 .take(TRAIL_LENGTH)
                 .enumerate()
             {
-                rpass.set_vertex_buffer(0, self.particle_buffers[i].slice(..(self.settings.particles * size_of::<Particle>()) as u64));
-                rpass.set_bind_group(1, &self.opacity_bind_groups[j], &[]);
-                rpass.draw_indexed(
-                    0..CIRCLE_POINTS as u32 * 3,
+                rpass.set_vertex_buffer(
                     0,
+                    self.particle_buffers[i]
+                        .slice(..(self.settings.particles * size_of::<Particle>()) as u64),
+                );
+                rpass.set_bind_group(2, &self.opacity_bind_groups[j], &[]);
+                rpass.draw(
+                    0..CIRCLE_POINTS as u32 * 3,
                     0..self.settings.particles as u32,
                 );
             }
@@ -634,7 +638,10 @@ impl State {
 
         let flags = (self.wrap as u32) << 1 | self.settings.flat_force as u32;
         self.queue
-            .write_buffer(&self.settings_buffer, 12, bytemuck::bytes_of(&flags))
+            .write_buffer(&self.settings_buffer, 12, bytemuck::bytes_of(&flags));
+
+        // Make sure the camera is within bounds
+        self.set_camera();
     }
 
     pub fn replace_settings<R: Rng>(&mut self, settings: Settings, rng: &mut R) {
@@ -700,6 +707,10 @@ impl State {
             }
         }
 
-        self.queue.write_buffer(&self.settings_buffer, size_of::<RuntimeSettings>() as u64 - 16, bytemuck::bytes_of(&[self.camera[0], self.camera[1], self.zoom]))
+        self.queue.write_buffer(
+            &self.settings_buffer,
+            size_of::<RuntimeSettings>() as u64 - 16,
+            bytemuck::bytes_of(&[self.camera[0], self.camera[1], self.zoom]),
+        )
     }
 }
