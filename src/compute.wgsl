@@ -186,4 +186,5 @@ fn update_velocity([[builtin(global_invocation_id)]] pos: vec3<u32>) {
     }
 
     out_particles.particles[i].pos = pos1;
+    out_particles.particles[i].vel = new_vel;
 }
