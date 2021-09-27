@@ -1,5 +1,5 @@
 let kinds: u32 = 20u;
-let radius: f32 = 10.0;
+let radius: f32 = 5.0;
 
 let flat_force: u32 = 1u;
 let wrap: u32 = 2u;
@@ -81,8 +81,8 @@ fn update_velocity([[builtin(global_invocation_id)]] pos: vec3<u32>) {
 
     let num_particles = arrayLength(&in_particles.particles);
 
-    let clip_width = radius / settings.width;
-    let clip_height = radius / settings.height;
+    let clip_width = radius * 2.0 / settings.width;
+    let clip_height = radius * 2.0 / settings.height;
 
     let kind1 = in_particles.particles[i].kind;
     var pos1 = in_particles.particles[i].pos;
@@ -118,19 +118,20 @@ fn update_velocity([[builtin(global_invocation_id)]] pos: vec3<u32>) {
         }
 
         // positions are in clip space, but everything else is in pixels, so scale this up.
-        delta = vec2<f32>(delta.x * settings.width, delta.y * settings.height);
+        delta = vec2<f32>(delta.x * settings.width / 2.0, delta.y * settings.height / 2.0);
 
-        let dist2 = delta.x * delta.x + delta.y * delta.y;
+        let dist2 = (delta.x * delta.x) + (delta.y * delta.y);
 
-        if (dist2 > symmetric_props.influence_radius * symmetric_props.influence_radius) {
+        // Disallow small distances so we don't end up with 0 / 0.
+        if (dist2 > (symmetric_props.influence_radius * symmetric_props.influence_radius) || dist2 < 0.01) {
             continue;
         }
 
         let dist = sqrt(dist2);
 
         var magnitude: f32;
-        if (dist < symmetric_props.repel_distance) {
-            magnitude = 2.0 * symmetric_props.repel_distance * (1.0 / (symmetric_props.repel_distance + 2.0) - 1.0 / (dist + 2.0));
+        if (dist <= symmetric_props.repel_distance) {
+            magnitude = 2.0 * symmetric_props.repel_distance * ((1.0 / (symmetric_props.repel_distance + 2.0)) - (1.0 / (dist + 2.0)));
         } else {
             var coefficient = 1.0;
 
@@ -148,7 +149,7 @@ fn update_velocity([[builtin(global_invocation_id)]] pos: vec3<u32>) {
 
     var new_vel = in_particles.particles[i].vel + force;
 
-    let pos_change = vec2<f32>(new_vel.x / settings.width, new_vel.y / settings.height);
+    let pos_change = vec2<f32>(new_vel.x * 2.0 / settings.width, new_vel.y * 2.0 / settings.height);
 
     pos1 = pos1 + pos_change;
 
@@ -185,5 +186,4 @@ fn update_velocity([[builtin(global_invocation_id)]] pos: vec3<u32>) {
     }
 
     out_particles.particles[i].pos = pos1;
-    out_particles.particles[i].vel = new_vel;
 }

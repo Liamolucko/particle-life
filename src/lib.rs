@@ -66,7 +66,7 @@ pub mod settings;
 use settings::RuntimeSettings;
 use settings::Settings;
 
-const RADIUS: f32 = 10.0;
+const RADIUS: f32 = 5.0;
 const DIAMETER: f32 = RADIUS * 2.0;
 
 const CIRCLE_POINTS: usize = 32;
@@ -87,14 +87,14 @@ struct Particle {
 /// Returns some points around the edge of a circle.
 fn circle_points(win_width: u32, win_height: u32) -> [[f32; 2]; CIRCLE_POINTS] {
     // We want 10px radius particles, so figure out what that maps to in clip space with this resolution.
-    let x_size = RADIUS / win_width as f32;
-    let y_size = RADIUS / win_height as f32;
+    let x_radius = RADIUS / (win_width as f32 / 2.0);
+    let y_radius = RADIUS / (win_height as f32 / 2.0);
 
     let mut out = [[0.0; 2]; CIRCLE_POINTS];
     for i in 0..CIRCLE_POINTS {
         let angle = (TAU / CIRCLE_POINTS as f32) * i as f32;
-        out[i][0] = angle.cos() * x_size;
-        out[i][1] = angle.sin() * y_size;
+        out[i][0] = angle.cos() * x_radius;
+        out[i][1] = angle.sin() * y_radius;
     }
     out
 }
