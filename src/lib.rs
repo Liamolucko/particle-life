@@ -169,7 +169,7 @@ pub struct State {
 
     pub settings: Settings,
 
-    pub last_frame: Instant,
+    pub last_step: Instant,
     pub step_number: usize,
     pub step_rate: u32,
 
@@ -516,7 +516,7 @@ impl State {
 
             settings,
 
-            last_frame: Instant::now(),
+            last_step: Instant::now(),
             step_number: 0,
             step_rate: 300,
 
@@ -560,9 +560,8 @@ impl State {
     pub fn render(&mut self) {
         let frame = self
             .surface
-            .get_current_frame()
-            .expect("Failed to acquire next swap chain texture")
-            .output;
+            .get_current_texture()
+            .expect("Failed to acquire next swap chain texture");
 
         let view = frame.texture.create_view(&TextureViewDescriptor::default());
 
@@ -577,8 +576,8 @@ impl State {
 
             let step_period = Duration::from_secs(1) / self.step_rate;
             let mut steps = 0;
-            while self.last_frame + step_period < Instant::now() {
-                self.last_frame += step_period;
+            while self.last_step + step_period < Instant::now() {
+                self.last_step += step_period;
                 self.step_number += 1;
                 self.step_number %= TRAIL_LENGTH + 1;
 
@@ -589,7 +588,7 @@ impl State {
 
                 if steps == 20 {
                     // It's not worth trying to catch up that far, just reset from here.
-                    self.last_frame = Instant::now();
+                    self.last_step = Instant::now();
                 }
             }
         }
@@ -631,6 +630,7 @@ impl State {
         }
 
         self.queue.submit(Some(encoder.finish()));
+        frame.present();
     }
 
     pub fn toggle_wrap(&mut self) {

@@ -140,7 +140,10 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
                     if drag_cause.is_some() {
                         // Drag the camera by however much the mouse position has changed.
-                        state.camera = [state.camera[0] + (mouse_pos[0] - old_pos[0]), state.camera[1] + (mouse_pos[1] - old_pos[1])];
+                        state.camera = [
+                            state.camera[0] + (mouse_pos[0] - old_pos[0]),
+                            state.camera[1] + (mouse_pos[1] - old_pos[1]),
+                        ];
 
                         state.set_camera();
                     }
@@ -158,6 +161,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             Event::MainEventsCleared => {
                 state.device.poll(Maintain::Wait);
 
+                // Note: we don't need to handle vsync here because surface.get_current_texture() blocks until the last frame is done.
+                // TODO: figure out what the deal is on the web
                 window.request_redraw();
             }
             _ => {}
