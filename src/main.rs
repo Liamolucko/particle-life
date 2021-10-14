@@ -17,6 +17,8 @@ fn main() {
     let event_loop = EventLoop::new();
     let window = Window::new(&event_loop).unwrap();
 
+    window.set_title("Particle Life");
+
     #[cfg(not(target_arch = "wasm32"))]
     {
         env_logger::init();
