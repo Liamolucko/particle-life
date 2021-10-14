@@ -10,6 +10,7 @@ use winit::event::VirtualKeyCode;
 use winit::event::WindowEvent;
 use winit::event_loop::ControlFlow;
 use winit::event_loop::EventLoop;
+use winit::window::Fullscreen;
 use winit::window::Window;
 
 fn main() {
@@ -93,6 +94,14 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
                                 VirtualKeyCode::Return => state.regenerate_particles(&mut rng),
                                 VirtualKeyCode::Space => state.step_rate = 30,
+
+                                VirtualKeyCode::F11 => {
+                                    if window.fullscreen().is_some() {
+                                        window.set_fullscreen(None);
+                                    } else {
+                                        window.set_fullscreen(Some(Fullscreen::Borderless(None)))
+                                    }
+                                }
 
                                 _ => {}
                             }
