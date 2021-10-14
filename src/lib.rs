@@ -1,16 +1,16 @@
-use std::f32::consts::TAU;
 use std::mem::size_of;
 use std::num::NonZeroU64;
 use std::time::Duration;
 
 use bytemuck::Pod;
 use bytemuck::Zeroable;
+use glam::vec2;
+use glam::Vec2;
 use instant::Instant;
+use palette::LinSrgb;
 use rand::rngs::OsRng;
 use rand::Rng;
-use rand_distr::Distribution;
-use rand_distr::Normal;
-use rand_distr::Uniform;
+use sim::Sim;
 use wgpu::include_wgsl;
 use wgpu::util::BufferInitDescriptor;
 use wgpu::util::DeviceExt;
@@ -33,9 +33,6 @@ use wgpu::BufferUsages;
 use wgpu::ColorTargetState;
 use wgpu::ColorWrites;
 use wgpu::CommandEncoderDescriptor;
-use wgpu::ComputePassDescriptor;
-use wgpu::ComputePipeline;
-use wgpu::ComputePipelineDescriptor;
 use wgpu::Device;
 use wgpu::FragmentState;
 use wgpu::Limits;
@@ -62,41 +59,36 @@ use wgpu::VertexStepMode;
 use winit::window::Window;
 
 pub mod settings;
+pub mod sim;
 
-use settings::RuntimeSettings;
 use settings::Settings;
-
-const RADIUS: f32 = 5.0;
-const DIAMETER: f32 = RADIUS * 2.0;
 
 const CIRCLE_POINTS: usize = 32;
 const SAMPLE_COUNT: u32 = 4;
+const MAX_PARTICLES: usize = 600;
+const PARTICLE_SEGMENT_SIZE: u64 = (size_of::<GpuParticle>() * MAX_PARTICLES) as u64;
 
 /// The number of past frames to use to create trails behind each particle.
-const TRAIL_LENGTH: usize = 10;
+const TRAIL_LENGTH: u64 = 10;
 
+// The particle information sent to the GPU.
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable, Debug)]
-struct Particle {
-    pos: [f32; 2],
-    vel: [f32; 2],
-    kind: u32,
-    padding: [u8; 4],
+#[derive(Debug, Default, Clone, Copy, Zeroable, Pod)]
+pub struct GpuParticle {
+    pos: Vec2,
+    color: LinSrgb,
 }
 
-/// Returns some points around the edge of a circle.
-fn circle_points(win_width: u32, win_height: u32) -> [[f32; 2]; CIRCLE_POINTS] {
-    // We want 10px radius particles, so figure out what that maps to in clip space with this resolution.
-    let x_radius = RADIUS / (win_width as f32 / 2.0);
-    let y_radius = RADIUS / (win_height as f32 / 2.0);
+#[repr(C)]
+#[derive(Pod, Zeroable, Clone, Copy, Debug)]
+pub struct RenderSettings {
+    pub width: f32,
+    pub height: f32,
 
-    let mut out = [[0.0; 2]; CIRCLE_POINTS];
-    for i in 0..CIRCLE_POINTS {
-        let angle = (TAU / CIRCLE_POINTS as f32) * i as f32;
-        out[i][0] = angle.cos() * x_radius;
-        out[i][1] = angle.sin() * y_radius;
-    }
-    out
+    pub wrap: u32,
+
+    pub zoom: f32,
+    pub camera: Vec2,
 }
 
 fn create_multisampled_framebuffer(
@@ -122,27 +114,6 @@ fn create_multisampled_framebuffer(
         .create_view(&TextureViewDescriptor::default())
 }
 
-fn generate_particles<R: Rng>(settings: Settings, rng: &mut R) -> Vec<Particle> {
-    let kinds = Uniform::new(0, settings.kinds as u32);
-    // This is in clip space, so it ranges from -1 to 1.
-    let pos_dist = Uniform::new(-0.5, 0.5);
-    let vel_dist = Normal::new(0.0, 0.2).unwrap();
-
-    // Always generate 600 particles so we don't have to worry about resizing the particle buffers.
-    // The buffers will be sliced so that only the correct amount are actually used.
-    let mut particles = Vec::with_capacity(600);
-    for _ in 0..600 {
-        particles.push(Particle {
-            kind: kinds.sample(rng),
-            pos: [pos_dist.sample(rng), pos_dist.sample(rng)],
-            vel: [vel_dist.sample(rng), vel_dist.sample(rng)],
-
-            padding: [0; 4],
-        })
-    }
-    particles
-}
-
 fn opacities() -> impl Iterator<Item = f32> {
     (1..=TRAIL_LENGTH).map(|n| n as f32 / TRAIL_LENGTH as f32)
 }
@@ -153,30 +124,26 @@ pub struct State {
     pub surface: Surface,
 
     pub settings_buffer: Buffer,
-    pub particle_buffers: Vec<Buffer>,
-    pub circle_vertex_buffer: Buffer,
+    pub particle_buffer: Buffer,
 
-    pub circle_bind_group: BindGroup,
     pub settings_bind_group: BindGroup,
-    pub particle_bind_groups: Vec<BindGroup>,
     pub opacity_bind_groups: Vec<BindGroup>,
 
-    pub compute_pipeline: ComputePipeline,
     pub render_pipeline: RenderPipeline,
 
     pub swapchain_format: TextureFormat,
     pub multisampled_framebuffer: TextureView,
 
-    pub settings: Settings,
-
     pub last_step: Instant,
-    pub step_number: usize,
+    // The index of the next segment of the particle buffer to be written to.
+    pub particle_segment: u64,
     pub step_rate: u32,
 
+    pub sim: Sim,
+
     // It's easier to keep track of these externally than read them from GPU memory every time.
-    pub wrap: bool,
     pub zoom: f32,
-    pub camera: [f32; 2],
+    pub camera: Vec2,
 }
 
 impl State {
@@ -202,7 +169,7 @@ impl State {
                     label: None,
                     features: wgpu::Features::empty(),
                     // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
-                    limits: Limits::downlevel_defaults().using_resolution(adapter.limits()),
+                    limits: Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
                 },
                 None,
             )
@@ -213,31 +180,28 @@ impl State {
 
         let size = window.inner_size();
 
-        let runtime_settings =
-            RuntimeSettings::generate(settings, size.width, size.height, &mut rng);
+        let render_settings = RenderSettings {
+            width: size.width as f32,
+            height: size.height as f32,
+            wrap: 0,
+            zoom: 1.0,
+            camera: vec2(0.0, 0.0),
+        };
 
         let settings_buffer = device.create_buffer_init(&BufferInitDescriptor {
             label: Some("Settings buffer"),
-            contents: bytemuck::bytes_of(&runtime_settings),
+            contents: bytemuck::bytes_of(&render_settings),
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
         });
 
-        let particles = generate_particles(settings, &mut rng);
+        let sim = Sim::new(settings, &mut rng);
 
-        let particle_buffers: Vec<_> = (1..=TRAIL_LENGTH + 1)
-            .map(|n| {
-                device.create_buffer_init(&BufferInitDescriptor {
-                    label: Some(&format!("Particle buffer {}", n)),
-                    contents: bytemuck::cast_slice(&particles),
-                    usage: BufferUsages::VERTEX | BufferUsages::STORAGE | BufferUsages::COPY_DST,
-                })
-            })
-            .collect();
+        let particles = sim.export_particles();
 
-        let circle_vertex_buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("Circle vertex buffer"),
-            contents: bytemuck::cast_slice(&circle_points(size.width, size.height)),
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+        let particle_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("Particle buffer"),
+            contents: bytemuck::cast_slice(&[particles; TRAIL_LENGTH as usize]),
+            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
         });
 
         let opacity_buffers: Vec<_> = opacities()
@@ -250,34 +214,6 @@ impl State {
             })
             .collect();
 
-        let circle_bind_group_layout =
-            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-                label: Some("Circle vertex bind group layout"),
-                entries: &[BindGroupLayoutEntry {
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: NonZeroU64::new(8 * CIRCLE_POINTS as u64),
-                    },
-                    binding: 0,
-                    visibility: ShaderStages::VERTEX,
-                    count: None,
-                }],
-            });
-
-        let circle_bind_group = device.create_bind_group(&BindGroupDescriptor {
-            label: Some("Circle vertex bind group"),
-            layout: &circle_bind_group_layout,
-            entries: &[BindGroupEntry {
-                binding: 0,
-                resource: BindingResource::Buffer(BufferBinding {
-                    buffer: &circle_vertex_buffer,
-                    offset: 0,
-                    size: None,
-                }),
-            }],
-        });
-
         let settings_bind_group_layout =
             device.create_bind_group_layout(&BindGroupLayoutDescriptor {
                 label: Some("Settings bind group layout"),
@@ -287,10 +223,10 @@ impl State {
                         ty: BindingType::Buffer {
                             ty: BufferBindingType::Uniform,
                             has_dynamic_offset: false,
-                            min_binding_size: NonZeroU64::new(size_of::<RuntimeSettings>() as u64),
+                            min_binding_size: NonZeroU64::new(size_of::<RenderSettings>() as u64),
                         },
                         binding: 0,
-                        visibility: ShaderStages::VERTEX | ShaderStages::COMPUTE,
+                        visibility: ShaderStages::VERTEX,
                         count: None,
                     },
                 ],
@@ -308,72 +244,6 @@ impl State {
                 }),
             }],
         });
-
-        let particle_bind_group_layout =
-            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-                label: None,
-                entries: &[
-                    // in_particles
-                    BindGroupLayoutEntry {
-                        ty: BindingType::Buffer {
-                            ty: BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: NonZeroU64::new(size_of::<Particle>() as u64),
-                        },
-                        binding: 0,
-                        visibility: ShaderStages::COMPUTE,
-                        count: None,
-                    },
-                    // out_particles
-                    BindGroupLayoutEntry {
-                        ty: BindingType::Buffer {
-                            ty: BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: NonZeroU64::new(size_of::<Particle>() as u64),
-                        },
-                        binding: 1,
-                        visibility: ShaderStages::COMPUTE,
-                        count: None,
-                    },
-                ],
-            });
-
-        let particle_bind_groups: Vec<_> = particle_buffers
-            .iter()
-            .zip(
-                // Offset the second buffer by 1, and use `cycle` to have the last one wrap back to the start.
-                particle_buffers
-                    .iter()
-                    .cycle()
-                    .skip(1)
-                    .take(particle_buffers.len()),
-            )
-            .enumerate()
-            .map(|(i, (in_buf, out_buf))| {
-                device.create_bind_group(&BindGroupDescriptor {
-                    label: Some(&format!("Particle buffer {}", i + 1)),
-                    layout: &particle_bind_group_layout,
-                    entries: &[
-                        BindGroupEntry {
-                            binding: 0,
-                            resource: BindingResource::Buffer(BufferBinding {
-                                buffer: in_buf,
-                                offset: 0,
-                                size: None,
-                            }),
-                        },
-                        BindGroupEntry {
-                            binding: 1,
-                            resource: BindingResource::Buffer(BufferBinding {
-                                buffer: out_buf,
-                                offset: 0,
-                                size: None,
-                            }),
-                        },
-                    ],
-                })
-            })
-            .collect();
 
         let opacity_bind_group_layout =
             device.create_bind_group_layout(&BindGroupLayoutDescriptor {
@@ -408,59 +278,41 @@ impl State {
             })
             .collect();
 
-        let compute_shader = device.create_shader_module(&include_wgsl!("compute.wgsl"));
-
-        let compute_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            bind_group_layouts: &[&settings_bind_group_layout, &particle_bind_group_layout],
-            ..Default::default()
-        });
-
-        let compute_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
-            label: Some("Physics compute pipeline"),
-            layout: Some(&compute_pipeline_layout),
-            module: &compute_shader,
-            entry_point: "update_velocity",
-        });
-
         let swapchain_format = surface.get_preferred_format(&adapter).unwrap();
 
-        let render_shader = device.create_shader_module(&include_wgsl!("render.wgsl"));
+        let shader = device.create_shader_module(&include_wgsl!("shader.wgsl"));
 
-        let render_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            bind_group_layouts: &[
-                &circle_bind_group_layout,
-                &settings_bind_group_layout,
-                &opacity_bind_group_layout,
-            ],
+        let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            bind_group_layouts: &[&settings_bind_group_layout, &opacity_bind_group_layout],
             ..Default::default()
         });
 
         let render_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
             label: Some("Render pipeline"),
-            layout: Some(&render_pipeline_layout),
+            layout: Some(&pipeline_layout),
             vertex: VertexState {
-                module: &render_shader,
+                module: &shader,
                 entry_point: "vs_main",
                 buffers: &[
                     // Particle buffer
                     VertexBufferLayout {
-                        array_stride: size_of::<Particle>() as u64,
+                        array_stride: size_of::<GpuParticle>() as u64,
                         step_mode: VertexStepMode::Instance,
-                        attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Uint32],
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x3],
                     },
-                ]
+                ],
             },
-            primitive: PrimitiveState ::default(),
+            primitive: PrimitiveState::default(),
             depth_stencil: None,
             multisample: MultisampleState {
                 count: SAMPLE_COUNT,
                 ..Default::default()
             },
             fragment: Some(FragmentState {
-                module: &render_shader,
+                module: &shader,
                 entry_point: "fs_main",
                 targets: &[ColorTargetState {
-                    format: swapchain_format.into(),
+                    format: swapchain_format,
                     // some basic blending, to make the translucent trails work.
                     // I don't really know what I'm doing when it comes to this, but this works ok.
                     blend: Some(BlendState {
@@ -476,7 +328,7 @@ impl State {
                         },
                     }),
                     write_mask: ColorWrites::ALL,
-                }]
+                }],
             }),
         });
 
@@ -500,29 +352,24 @@ impl State {
             surface,
 
             settings_buffer,
-            particle_buffers,
-            circle_vertex_buffer,
+            particle_buffer,
 
-            circle_bind_group,
             settings_bind_group,
-            particle_bind_groups,
             opacity_bind_groups,
 
-            compute_pipeline,
             render_pipeline,
 
             swapchain_format,
             multisampled_framebuffer,
 
-            settings,
-
             last_step: Instant::now(),
-            step_number: 0,
+            particle_segment: 0,
             step_rate: 300,
 
-            wrap: false,
+            sim,
+
             zoom: 1.0,
-            camera: [0.0, 0.0],
+            camera: vec2(0.0, 0.0),
         }
     }
 
@@ -548,16 +395,9 @@ impl State {
             0,
             bytemuck::bytes_of(&[width as f32, height as f32]),
         );
-
-        // Update the circle points.
-        self.queue.write_buffer(
-            &self.circle_vertex_buffer,
-            0,
-            bytemuck::bytes_of(&circle_points(width, height)),
-        );
     }
 
-    pub fn render(&mut self) {
+    pub fn render(&mut self, width: f32, height: f32) {
         let frame = self
             .surface
             .get_current_texture()
@@ -569,27 +409,29 @@ impl State {
             .device
             .create_command_encoder(&CommandEncoderDescriptor { label: None });
 
-        {
-            let mut cpass = encoder.begin_compute_pass(&ComputePassDescriptor { label: None });
-            cpass.set_pipeline(&self.compute_pipeline);
-            cpass.set_bind_group(0, &self.settings_bind_group, &[]);
+        let step_period = Duration::from_secs(1) / self.step_rate;
+        let mut steps = 0;
+        while self.last_step + step_period < Instant::now() {
+            self.last_step += step_period;
 
-            let step_period = Duration::from_secs(1) / self.step_rate;
-            let mut steps = 0;
-            while self.last_step + step_period < Instant::now() {
-                self.last_step += step_period;
-                self.step_number += 1;
-                self.step_number %= TRAIL_LENGTH + 1;
+            self.sim.step(width, height);
 
-                cpass.set_bind_group(1, &self.particle_bind_groups[self.step_number], &[]);
-                cpass.dispatch(self.settings.particles as u32 / 100, 1, 1);
+            self.particle_segment += 1;
+            self.particle_segment %= TRAIL_LENGTH;
 
-                steps += 1;
+            let offset = self.particle_segment * PARTICLE_SEGMENT_SIZE;
 
-                if steps == 20 {
-                    // It's not worth trying to catch up that far, just reset from here.
-                    self.last_step = Instant::now();
-                }
+            self.queue.write_buffer(
+                &self.particle_buffer,
+                offset,
+                bytemuck::cast_slice(&self.sim.export_particles()),
+            );
+
+            steps += 1;
+
+            if steps == 20 {
+                // It's not worth trying to catch up that far, just reset from here.
+                self.last_step = Instant::now();
             }
         }
 
@@ -608,23 +450,25 @@ impl State {
             });
             rpass.set_pipeline(&self.render_pipeline);
 
-            rpass.set_bind_group(0, &self.circle_bind_group, &[]);
-            rpass.set_bind_group(1, &self.settings_bind_group, &[]);
+            rpass.set_bind_group(0, &self.settings_bind_group, &[]);
 
-            for (j, i) in (self.step_number + 2..)
-                .map(|i| i % (TRAIL_LENGTH + 1))
-                .take(TRAIL_LENGTH)
+            for (j, i) in (self.particle_segment + 1..)
+                .map(|i| i % TRAIL_LENGTH)
+                .take(TRAIL_LENGTH as usize)
                 .enumerate()
             {
+                let offset = i * PARTICLE_SEGMENT_SIZE;
                 rpass.set_vertex_buffer(
                     0,
-                    self.particle_buffers[i]
-                        .slice(..(self.settings.particles * size_of::<Particle>()) as u64),
+                    self.particle_buffer.slice(
+                        offset
+                            ..offset + (self.sim.particles.len() * size_of::<GpuParticle>()) as u64,
+                    ),
                 );
-                rpass.set_bind_group(2, &self.opacity_bind_groups[j], &[]);
+                rpass.set_bind_group(1, &self.opacity_bind_groups[j], &[]);
                 rpass.draw(
                     0..CIRCLE_POINTS as u32 * 3,
-                    0..self.settings.particles as u32,
+                    0..self.sim.particles.len() as u32,
                 );
             }
         }
@@ -634,61 +478,45 @@ impl State {
     }
 
     pub fn toggle_wrap(&mut self) {
-        self.wrap = !self.wrap;
+        self.sim.wrap = !self.sim.wrap;
 
-        let flags = (self.wrap as u32) << 1 | self.settings.flat_force as u32;
-        self.queue
-            .write_buffer(&self.settings_buffer, 12, bytemuck::bytes_of(&flags));
+        self.queue.write_buffer(
+            &self.settings_buffer,
+            8,
+            bytemuck::bytes_of(&(self.sim.wrap as u32)),
+        );
 
         // Make sure the camera is within bounds
         self.set_camera();
     }
 
     pub fn replace_settings<R: Rng>(&mut self, settings: Settings, rng: &mut R) {
-        self.settings = settings;
-
-        self.regenerate_kinds(rng);
+        self.sim = Sim {
+            wrap: self.sim.wrap,
+            ..Sim::new(settings, rng)
+        };
 
         self.regenerate_particles(rng);
     }
 
     pub fn regenerate_particles<R: Rng>(&mut self, rng: &mut R) {
-        let particles = generate_particles(self.settings, rng);
-
-        for buffer in self.particle_buffers.iter() {
-            self.queue
-                .write_buffer(&buffer, 0, bytemuck::cast_slice(&particles));
-        }
+        self.sim.regenerate_particles(rng);
 
         // Reset camera and zoom
-        self.camera = [0.0, 0.0];
+        self.camera = vec2(0.0, 0.0);
         self.zoom = 1.0;
         self.set_camera();
     }
 
-    fn regenerate_kinds<R: Rng>(&mut self, rng: &mut R) {
-        // Use dummy width and height, and then just leave the existing values there by only updating the latter part.
-        let mut runtime_settings = RuntimeSettings::generate(self.settings, 0, 0, rng);
-
-        // Set the wrap flag correctly
-        runtime_settings.flags |= (self.wrap as u32) << 1;
-
-        self.queue.write_buffer(
-            &self.settings_buffer,
-            8,
-            &bytemuck::bytes_of(&runtime_settings)[8..],
-        );
-    }
-
     /// Sets the camera zoom and position.
     pub fn set_camera(&mut self) {
-        if !self.wrap {
+        if !self.sim.wrap {
             let view_radius = 1.0 / self.zoom;
 
-            self.camera = [
-                self.camera[0].clamp(-1.0 + view_radius, 1.0 - view_radius),
-                self.camera[1].clamp(-1.0 + view_radius, 1.0 - view_radius),
-            ]
+            self.camera = self.camera.clamp(
+                vec2(-1.0 + view_radius, -1.0 + view_radius),
+                vec2(1.0 - view_radius, 1.0 - view_radius),
+            );
         } else {
             while self.camera[0] > 1.0 {
                 self.camera[0] -= 2.0;
@@ -709,8 +537,8 @@ impl State {
 
         self.queue.write_buffer(
             &self.settings_buffer,
-            size_of::<RuntimeSettings>() as u64 - 16,
-            bytemuck::bytes_of(&[self.camera[0], self.camera[1], self.zoom]),
+            12,
+            bytemuck::bytes_of(&[self.zoom, self.camera[0], self.camera[1]]),
         )
     }
 }

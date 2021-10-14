@@ -1,3 +1,4 @@
+use glam::vec2;
 use particle_life::settings::Settings;
 use particle_life::State;
 use rand::rngs::OsRng;
@@ -45,7 +46,8 @@ fn main() {
 async fn run(event_loop: EventLoop<()>, window: Window) {
     let mut state = State::new(&window).await;
 
-    let mut mouse_pos = [0.0, 0.0];
+    // The offset from the center of the window in clip space.
+    let mut mouse_pos = vec2(0.0, 0.0);
     let mut drag_cause = None;
 
     let mut rng = OsRng;
@@ -106,44 +108,34 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                         MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 60.0,
                     };
 
-                    let old_pos = [
-                        mouse_pos[0] - state.camera[0],
-                        mouse_pos[1] - state.camera[1],
-                    ];
-
-                    let old_zoom = state.zoom;
+                    let old_pos = mouse_pos / state.zoom - state.camera;
 
                     state.zoom *= 1.1f32.powf(scrolled);
                     state.zoom = state.zoom.clamp(1.0, 10.0);
 
-                    let new_pos = [
-                        mouse_pos[0] * old_zoom / state.zoom - state.camera[0],
-                        mouse_pos[1] * old_zoom / state.zoom - state.camera[1],
-                    ];
+                    let new_pos = mouse_pos / state.zoom - state.camera;
 
-                    let delta = [new_pos[0] - old_pos[0], new_pos[1] - old_pos[1]];
+                    let delta = new_pos - old_pos;
 
-                    state.camera = [state.camera[0] + delta[0], state.camera[1] + delta[1]];
+                    state.camera += delta;
 
                     state.set_camera();
                 }
                 WindowEvent::CursorMoved { position, .. } => {
-                    let size = window.inner_size();
+                    let position = position.to_logical(window.scale_factor());
+                    let size = window.inner_size().to_logical(window.scale_factor());
 
                     let old_pos = mouse_pos;
 
-                    // Convert the position to clip space; it's easier to work with that way.
-                    mouse_pos = [
-                        (position.x as f32 * 2.0 / size.width as f32 - 1.0) / state.zoom,
-                        (position.y as f32 * -2.0 / size.height as f32 + 1.0) / state.zoom,
-                    ];
+                    let center = vec2(size.width, size.height) / 2.0;
+                    let offset = vec2(position.x, position.y) - center;
+                    mouse_pos = vec2(offset.x, -offset.y) / center;
 
                     if drag_cause.is_some() {
+                        let delta = (mouse_pos - old_pos) / state.zoom;
+
                         // Drag the camera by however much the mouse position has changed.
-                        state.camera = [
-                            state.camera[0] + (mouse_pos[0] - old_pos[0]),
-                            state.camera[1] + (mouse_pos[1] - old_pos[1]),
-                        ];
+                        state.camera += delta;
 
                         state.set_camera();
                     }
@@ -157,7 +149,10 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 }
                 _ => {}
             },
-            Event::RedrawRequested(_) => state.render(),
+            Event::RedrawRequested(_) => {
+                let size = window.inner_size().to_logical(window.scale_factor());
+                state.render(size.width, size.height);
+            }
             Event::MainEventsCleared => {
                 state.device.poll(Maintain::Wait);
 
