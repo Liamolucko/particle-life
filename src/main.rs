@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use glam::vec2;
 use particle_life::settings::Settings;
 use particle_life::State;
@@ -15,7 +17,7 @@ use winit::window::Window;
 
 fn main() {
     let event_loop = EventLoop::new();
-    let window = Window::new(&event_loop).unwrap();
+    let window = Rc::new(Window::new(&event_loop).unwrap());
 
     window.set_title("Particle Life");
 
@@ -27,26 +29,54 @@ fn main() {
     }
     #[cfg(target_arch = "wasm32")]
     {
+        use wasm_bindgen::closure::Closure;
+        use wasm_bindgen::JsCast;
+        use wasm_bindgen::JsValue;
+        use winit::dpi::LogicalSize;
         use winit::platform::web::WindowExtWebSys;
 
         console_error_panic_hook::set_once();
         console_log::init().expect("could not initialize logger");
 
         // On wasm, append the canvas to the document body
-        web_sys::window()
-            .and_then(|win| win.document())
+        let win = web_sys::window().expect("Couldn't get window");
+
+        win.document()
             .and_then(|doc| doc.body())
-            .and_then(|body| {
-                body.append_child(&web_sys::Element::from(window.canvas()))
-                    .ok()
-            })
+            .and_then(|body| body.append_child(&window.canvas()).ok())
             .expect("couldn't append canvas to document body");
+
+        fn size(window: &web_sys::Window) -> LogicalSize<f64> {
+            fn unwrap_dim(dim: Result<JsValue, JsValue>) -> f64 {
+                dim.unwrap().as_f64().unwrap()
+            }
+            LogicalSize::new(
+                unwrap_dim(window.inner_width()),
+                unwrap_dim(window.inner_height()),
+            )
+        }
+
+        window.set_inner_size(size(&win));
+
+        {
+            let window = Rc::clone(&window);
+            let win2 = win.clone();
+
+            win2.set_onresize(Some(
+                &Closure::wrap(Box::new(move || {
+                    window.set_inner_size(size(&win));
+                }) as Box<dyn Fn()>)
+                .into_js_value()
+                .dyn_into()
+                .unwrap(),
+            ));
+        }
 
         wasm_bindgen_futures::spawn_local(run(event_loop, window));
     }
 }
 
-async fn run(event_loop: EventLoop<()>, window: Window) {
+async fn run(event_loop: EventLoop<()>, window: Rc<Window>) {
     let mut state = State::new(&window).await;
 
     // The offset from the center of the window in clip space.

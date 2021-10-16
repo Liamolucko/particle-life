@@ -89,6 +89,9 @@ pub struct RenderSettings {
 
     pub zoom: f32,
     pub camera: Vec2,
+
+    // The size of the uniform seems to be rounded up to the nearest 16 on WebGL, so add some padding to make it work.
+    pub padding: [u8; 8],
 }
 
 fn create_multisampled_framebuffer(
@@ -186,6 +189,7 @@ impl State {
             wrap: 0,
             zoom: 1.0,
             camera: vec2(0.0, 0.0),
+            padding: [0; 8],
         };
 
         let settings_buffer = device.create_buffer_init(&BufferInitDescriptor {
@@ -208,7 +212,7 @@ impl State {
             .map(|opacity| {
                 device.create_buffer_init(&BufferInitDescriptor {
                     label: Some(&format!("{} opacity buffer", opacity)),
-                    contents: bytemuck::bytes_of(&opacity),
+                    contents: bytemuck::cast_slice(&[opacity, 0.0, 0.0, 0.0]),
                     usage: BufferUsages::UNIFORM,
                 })
             })
