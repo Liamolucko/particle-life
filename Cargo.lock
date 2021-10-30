@@ -1662,12 +1662,12 @@ dependencies = [
 [[package]]
 name = "wgpu"
 version = "0.11.0"
-source = "git+https://github.com/Skybox-Technologies/wgpu?branch=webgl2-resize-fix#2893a184dd48e4c5ed71ae505aa63f9f6c78b658"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1577ecc4f6992b9e965878ac594efb24eed2bdf089c11f45b3d1c5f216e2e30"
 dependencies = [
  "arrayvec",
  "js-sys",
  "log",
- "naga",
  "parking_lot",
  "raw-window-handle",
  "smallvec",
@@ -1681,8 +1681,9 @@ dependencies = [
 
 [[package]]
 name = "wgpu-core"
-version = "0.11.0"
-source = "git+https://github.com/Skybox-Technologies/wgpu?branch=webgl2-resize-fix#2893a184dd48e4c5ed71ae505aa63f9f6c78b658"
+version = "0.11.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3bdcbfa4885b32c2b1feb2faeb8b6a76065b752b8f08751b82f994e937687f46"
 dependencies = [
  "arrayvec",
  "bitflags",
@@ -1702,8 +1703,9 @@ dependencies = [
 
 [[package]]
 name = "wgpu-hal"
-version = "0.11.2"
-source = "git+https://github.com/Skybox-Technologies/wgpu?branch=webgl2-resize-fix#2893a184dd48e4c5ed71ae505aa63f9f6c78b658"
+version = "0.11.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e493835d9edb153d5c8a9d8d016e1811dbe32ddb707a110be1453c7b051d3ec"
 dependencies = [
  "arrayvec",
  "ash",
@@ -1740,7 +1742,8 @@ dependencies = [
 [[package]]
 name = "wgpu-types"
 version = "0.11.0"
-source = "git+https://github.com/Skybox-Technologies/wgpu?branch=webgl2-resize-fix#2893a184dd48e4c5ed71ae505aa63f9f6c78b658"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e15e44ba88ec415466e18e91881319e7c9e96cb905dc623305168aea65b85ccc"
 dependencies = [
  "bitflags",
 ]

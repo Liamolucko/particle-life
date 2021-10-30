@@ -31,7 +31,3 @@ pollster = "0.2.4"
 
 [profile.release]
 debug = 1
-
-# TODO: remove when https://github.com/gfx-rs/wgpu/pull/2067 is merged.
-[patch.crates-io]
-wgpu = { git = "https://github.com/Skybox-Technologies/wgpu", branch = "webgl2-resize-fix" }
