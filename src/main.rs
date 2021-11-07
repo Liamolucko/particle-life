@@ -89,7 +89,7 @@ async fn run(event_loop: EventLoop<()>, window: Rc<Window>) {
         *control_flow = ControlFlow::Poll;
         match event {
             Event::WindowEvent { event, .. } => match event {
-                WindowEvent::Resized(size) => state.resize(size.width, size.height),
+                WindowEvent::Resized(size) => state.resize(size, window.scale_factor()),
                 WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
                 WindowEvent::KeyboardInput { input, .. } => {
                     if let Some(code) = input.virtual_keycode {

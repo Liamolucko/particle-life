@@ -56,6 +56,8 @@ use wgpu::TextureViewDescriptor;
 use wgpu::VertexBufferLayout;
 use wgpu::VertexState;
 use wgpu::VertexStepMode;
+use winit::dpi::LogicalSize;
+use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
 pub mod settings;
@@ -182,10 +184,11 @@ impl State {
         let mut rng = OsRng;
 
         let size = window.inner_size();
+        let logical_size = size.to_logical(window.scale_factor());
 
         let render_settings = RenderSettings {
-            width: size.width as f32,
-            height: size.height as f32,
+            width: logical_size.width,
+            height: logical_size.height,
             wrap: 0,
             zoom: 1.0,
             camera: vec2(0.0, 0.0),
@@ -377,27 +380,29 @@ impl State {
         }
     }
 
-    pub fn resize(&mut self, width: u32, height: u32) {
+    pub fn resize(&mut self, size: PhysicalSize<u32>, scale_factor: f64) {
         self.surface.configure(
             &self.device,
             &SurfaceConfiguration {
                 usage: TextureUsages::RENDER_ATTACHMENT,
                 format: self.swapchain_format,
-                width,
-                height,
+                width: size.width,
+                height: size.height,
                 present_mode: PresentMode::Fifo,
             },
         );
 
         // Replace the framebuffer with a new one the correct size
         self.multisampled_framebuffer =
-            create_multisampled_framebuffer(&self.device, self.swapchain_format, width, height);
+            create_multisampled_framebuffer(&self.device, self.swapchain_format, size.width, size.height);
+
+        let logical_size: LogicalSize<f32> = size.to_logical(scale_factor);
 
         // Update the resolution in `RuntimeSettings`, which is at offset 0.
         self.queue.write_buffer(
             &self.settings_buffer,
             0,
-            bytemuck::bytes_of(&[width as f32, height as f32]),
+            bytemuck::bytes_of(&[logical_size.width, logical_size.height]),
         );
     }
 
