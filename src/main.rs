@@ -53,7 +53,7 @@ fn main() {
 
         fn size(element: &web_sys::Element) -> LogicalSize<i32> {
             // For the root <html> element, these return the size of the viewport.
-            LogicalSize::new(element.scroll_width(), element.scroll_height())
+            LogicalSize::new(element.client_width(), element.client_height())
         }
 
         window.set_inner_size(size(&root));
