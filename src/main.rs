@@ -31,7 +31,6 @@ fn main() {
     {
         use wasm_bindgen::closure::Closure;
         use wasm_bindgen::JsCast;
-        use wasm_bindgen::JsValue;
         use winit::dpi::LogicalSize;
         use winit::platform::web::WindowExtWebSys;
 
@@ -41,30 +40,30 @@ fn main() {
         // On wasm, append the canvas to the document body
         let win = web_sys::window().expect("Couldn't get window");
 
-        win.document()
-            .and_then(|doc| doc.body())
+        let document = win.document().expect("Couldn't get document");
+
+        document
+            .body()
             .and_then(|body| body.append_child(&window.canvas()).ok())
             .expect("couldn't append canvas to document body");
 
-        fn size(window: &web_sys::Window) -> LogicalSize<f64> {
-            fn unwrap_dim(dim: Result<JsValue, JsValue>) -> f64 {
-                dim.unwrap().as_f64().unwrap()
-            }
-            LogicalSize::new(
-                unwrap_dim(window.inner_width()),
-                unwrap_dim(window.inner_height()),
-            )
+        let root = document
+            .document_element()
+            .expect("Failed to get root element");
+
+        fn size(element: &web_sys::Element) -> LogicalSize<i32> {
+            // For the root <html> element, these return the size of the viewport.
+            LogicalSize::new(element.client_width(), element.client_height())
         }
 
-        window.set_inner_size(size(&win));
+        window.set_inner_size(size(&root));
 
         {
             let window = Rc::clone(&window);
-            let win2 = win.clone();
 
-            win2.set_onresize(Some(
+            win.set_onresize(Some(
                 &Closure::wrap(Box::new(move || {
-                    window.set_inner_size(size(&win));
+                    window.set_inner_size(size(&root));
                 }) as Box<dyn Fn()>)
                 .into_js_value()
                 .dyn_into()
