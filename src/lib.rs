@@ -393,8 +393,12 @@ impl State {
         );
 
         // Replace the framebuffer with a new one the correct size
-        self.multisampled_framebuffer =
-            create_multisampled_framebuffer(&self.device, self.swapchain_format, size.width, size.height);
+        self.multisampled_framebuffer = create_multisampled_framebuffer(
+            &self.device,
+            self.swapchain_format,
+            size.width,
+            size.height,
+        );
 
         let logical_size: LogicalSize<f32> = size.to_logical(scale_factor);
 
