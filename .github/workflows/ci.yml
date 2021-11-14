@@ -1,0 +1,63 @@
+name: ci
+on: [push, pull_request]
+env:
+  CARGO_TERM_COLOR: always
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: wasm32-unknown-unknown
+      - name: Format
+        run: cargo fmt -- --check
+      - name: Lint
+        run: cargo clippy
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: wasm32-unknown-unknown
+      - name: Install wasm-bindgen
+        uses: actions-rs/cargo@v1
+        with:
+          command: install
+          args: wasm-bindgen-cli --version 0.2.78 # Keep this version in sync with Cargo.toml
+      - name: Build
+        run: |
+          cargo build --release
+          wasm-bindgen target/release/particle-life.wasm --target web --out-dir pkg --no-typescript
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: output
+          path: |
+            index.html
+            pkg/particle-life_bg.wasm
+            pkg/particle-life.js
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.repository == 'Liamolucko/particle-life' && github.ref == 'refs/heads/master'
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Download Artifacts
+        uses: actions/download-artifact@v2
+        with:
+          name: output
+          path: build
+      - name: Deploy
+        uses: JamesIves/github-pages-deploy-action@4.1.5
+        with:
+          branch: gh-pages
+          folder: build
