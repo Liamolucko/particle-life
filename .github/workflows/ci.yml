@@ -46,7 +46,7 @@ jobs:
             pkg/particle-life.js
   deploy:
     runs-on: ubuntu-latest
-    if: github.repository == 'Liamolucko/particle-life' && github.ref == 'refs/heads/master'
+    if: github.repository == 'Liamolucko/particle-life' && github.ref == 'refs/heads/main'
     needs: build
     steps:
       - name: Checkout
