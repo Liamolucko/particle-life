@@ -1,19 +1,7 @@
-let kinds: u32 = 20u;
 let radius: f32 = 5.0;
 let num_circle_points: u32 = 32u;
 
-// let flat_force: u32 = 1u;
-let wrap: u32 = 2u;
-
 let pi: f32 = 3.14159265358979323846264338327950288;
-
-/// The symmetric properties of two kinds of particles.
-struct SymmetricProperties {
-    /// The distance below which particles begin to unconditionally repel each other.
-    repel_distance: f32;
-    /// The distance above which particles have no influence on each other (squared).
-    influence_radius: f32;
-};
 
 [[block]]
 struct Settings {
