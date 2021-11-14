@@ -14,9 +14,9 @@ use crate::settings::Settings;
 use crate::GpuParticle;
 use crate::MAX_PARTICLES;
 
-const RADIUS: f32 = 5.0;
-const DIAMETER: f32 = RADIUS * 2.0;
-const R_SMOOTH: f32 = 2.0;
+pub const RADIUS: f32 = 5.0;
+pub const DIAMETER: f32 = RADIUS * 2.0;
+pub const R_SMOOTH: f32 = 2.0;
 
 #[derive(Clone, Copy, Debug)]
 pub struct SymmetricProperties {
@@ -195,11 +195,11 @@ impl Sim {
         }
 
         // Figure out the width/height of the particles in clip space.
-        let clip_width = RADIUS * 2.0 / width;
-        let clip_height = RADIUS * 2.0 / height;
+        let clip_width = RADIUS / (width / 2.0);
+        let clip_height = RADIUS / (height / 2.0);
 
         for p in self.particles.iter_mut() {
-            p.pos += vec2(p.vel.x * 2.0 / width, p.vel.y * 2.0 / height);
+            p.pos += vec2(p.vel.x / (width / 2.0), p.vel.y / (height / 2.0));
             p.vel *= 1.0 - self.friction;
 
             if self.wrap {

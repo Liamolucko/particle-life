@@ -5,13 +5,22 @@ let pi: f32 = 3.14159265358979323846264338327950288;
 
 [[block]]
 struct Settings {
-    width: f32;
-    height: f32;
-
     wrap: u32;
 
     zoom: f32;
     camera: vec2<f32>;
+
+    // Explicitly declare the padding here so that the dimensions and circle points are next to each other.
+    // Also, I'm not sure this padding would even be there outside webgl, so we need to add it manually to make the layout consistent.
+    padding1: u32;
+    padding2: u32;
+
+    width: f32;
+    height: f32;
+
+    // On WebGL, anything in an array is treated as though anything in an array is at minimum the size of a vec4,
+    // so manually set the stride up on other platforms too.
+    circle_points: [[stride(16)]] array<vec2<f32>, num_circle_points>;
 };
 
 /// Settings which differ between render passes.
@@ -65,9 +74,12 @@ fn vs_main(particle: Particle, [[builtin(vertex_index)]] idx: u32) -> VertexOutp
             point = idx / 3u;
         } else {
             point = idx / 3u + 1u;
+            if (point == num_circle_points) {
+                point = 0u;
+            }
         }
-        let angle = f32(point) / f32(num_circle_points) * 2.0 * pi;
-        circle_point = vec2<f32>(cos(angle) * radius * 2.0 / settings.width, sin(angle) * radius * 2.0 / settings.height);
+
+        circle_point = settings.circle_points[point];
     }
 
     var vertex = pos + circle_point;

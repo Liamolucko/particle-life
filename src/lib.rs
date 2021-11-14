@@ -1,3 +1,4 @@
+use std::f32::consts::TAU;
 use std::mem::size_of;
 use std::num::NonZeroU64;
 use std::time::Duration;
@@ -5,12 +6,15 @@ use std::time::Duration;
 use bytemuck::Pod;
 use bytemuck::Zeroable;
 use glam::vec2;
+use glam::vec4;
 use glam::Vec2;
+use glam::Vec4;
 use instant::Instant;
 use palette::LinSrgb;
 use rand::rngs::OsRng;
 use rand::Rng;
 use sim::Sim;
+use sim::RADIUS;
 use wgpu::include_wgsl;
 use wgpu::util::BufferInitDescriptor;
 use wgpu::util::DeviceExt;
@@ -84,16 +88,18 @@ pub struct GpuParticle {
 #[repr(C)]
 #[derive(Pod, Zeroable, Clone, Copy, Debug)]
 pub struct RenderSettings {
-    pub width: f32,
-    pub height: f32,
-
     pub wrap: u32,
 
     pub zoom: f32,
     pub camera: Vec2,
 
-    // The size of the uniform seems to be rounded up to the nearest 16 on WebGL, so add some padding to make it work.
-    pub padding: [u8; 8],
+    pub padding: [u32; 2],
+
+    pub width: f32,
+    pub height: f32,
+
+    // stupid webgl alignment stuff means that vec2s in arrays are basically treated as vec4s.
+    pub circle_points: [Vec4; CIRCLE_POINTS],
 }
 
 fn create_multisampled_framebuffer(
@@ -121,6 +127,22 @@ fn create_multisampled_framebuffer(
 
 fn opacities() -> impl Iterator<Item = f32> {
     (1..=TRAIL_LENGTH).map(|n| n as f32 / TRAIL_LENGTH as f32)
+}
+
+fn circle_points(size: LogicalSize<f32>) -> [Vec4; CIRCLE_POINTS] {
+    let mut out = [Vec4::ZERO; CIRCLE_POINTS];
+
+    for (i, point) in out.iter_mut().enumerate() {
+        let angle = TAU * (i as f32) / (CIRCLE_POINTS as f32);
+        *point = vec4(
+            RADIUS * angle.cos() / (size.width / 2.0),
+            RADIUS * angle.sin() / (size.height / 2.0),
+            0.0,
+            0.0,
+        );
+    }
+
+    out
 }
 
 pub struct State {
@@ -187,12 +209,17 @@ impl State {
         let logical_size = size.to_logical(window.scale_factor());
 
         let render_settings = RenderSettings {
-            width: logical_size.width,
-            height: logical_size.height,
             wrap: 0,
+
             zoom: 1.0,
             camera: vec2(0.0, 0.0),
-            padding: [0; 8],
+
+            padding: [0; 2],
+
+            width: logical_size.width,
+            height: logical_size.height,
+
+            circle_points: circle_points(logical_size),
         };
 
         let settings_buffer = device.create_buffer_init(&BufferInitDescriptor {
@@ -402,11 +429,24 @@ impl State {
 
         let logical_size: LogicalSize<f32> = size.to_logical(scale_factor);
 
-        // Update the resolution in `RuntimeSettings`, which is at offset 0.
+        let new_settings = RenderSettings {
+            // Fill these in with dummy values; we aren't actually including them.
+            wrap: 0,
+            zoom: 1.0,
+            camera: vec2(0.0, 0.0),
+            padding: [0; 2],
+
+            width: logical_size.width,
+            height: logical_size.height,
+
+            circle_points: circle_points(logical_size),
+        };
+
+        // Update the resolution & circle points in `RenderSettings`.
         self.queue.write_buffer(
             &self.settings_buffer,
-            0,
-            bytemuck::bytes_of(&[logical_size.width, logical_size.height]),
+            24,
+            &bytemuck::bytes_of(&new_settings)[24..],
         );
     }
 
@@ -495,7 +535,7 @@ impl State {
 
         self.queue.write_buffer(
             &self.settings_buffer,
-            8,
+            0,
             bytemuck::bytes_of(&(self.sim.wrap as u32)),
         );
 
@@ -550,7 +590,7 @@ impl State {
 
         self.queue.write_buffer(
             &self.settings_buffer,
-            12,
+            4,
             bytemuck::bytes_of(&[self.zoom, self.camera[0], self.camera[1]]),
         )
     }
