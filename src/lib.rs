@@ -135,8 +135,8 @@ fn circle_points(size: LogicalSize<f32>) -> [Vec4; CIRCLE_POINTS] {
     for (i, point) in out.iter_mut().enumerate() {
         let angle = TAU * (i as f32) / (CIRCLE_POINTS as f32);
         *point = vec4(
-            RADIUS * angle.cos() / (size.width / 2.0),
-            RADIUS * angle.sin() / (size.height / 2.0),
+            2.0 * RADIUS * angle.cos() / size.width,
+            2.0 * RADIUS * angle.sin() / size.height,
             0.0,
             0.0,
         );

@@ -24,6 +24,8 @@ pub struct SymmetricProperties {
     pub repel_distance: f32,
     /// The distance above which particles have no influence on each other.
     pub influence_radius: f32,
+    /// The distance above which particles have no influence on each other, squared.
+    pub influence_radius_sq: f32,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -98,6 +100,7 @@ impl Sim {
                     symmetric_props.push(SymmetricProperties {
                         repel_distance,
                         influence_radius,
+                        influence_radius_sq: influence_radius * influence_radius,
                     });
                 }
             }
@@ -148,8 +151,8 @@ impl Sim {
                 }
 
                 // The positions are in clip space, but velocities are in pixel space, so we need to scale these up.
-                delta.x *= width / 2.0;
-                delta.y *= height / 2.0;
+                delta.x *= 0.5 * width;
+                delta.y *= 0.5 * height;
 
                 let dist2 = delta.length_squared();
 
@@ -157,10 +160,11 @@ impl Sim {
                 let SymmetricProperties {
                     repel_distance,
                     influence_radius,
+                    influence_radius_sq,
                 } = self.symmetric_props[index];
 
                 // Disallow small distances to avoid division by zero, since we divide by this to normalize the vector later on.
-                if dist2 < 0.01 || dist2 > influence_radius * influence_radius {
+                if dist2 < 0.01 || dist2 > influence_radius_sq {
                     continue;
                 }
 
@@ -195,11 +199,11 @@ impl Sim {
         }
 
         // Figure out the width/height of the particles in clip space.
-        let clip_width = RADIUS / (width / 2.0);
-        let clip_height = RADIUS / (height / 2.0);
+        let clip_width = 2.0 * RADIUS / width;
+        let clip_height = 2.0 * RADIUS / height;
 
         for p in self.particles.iter_mut() {
-            p.pos += vec2(p.vel.x / (width / 2.0), p.vel.y / (height / 2.0));
+            p.pos += vec2(2.0 * p.vel.x / width, 2.0 * p.vel.y / height);
             p.vel *= 1.0 - self.friction;
 
             if self.wrap {

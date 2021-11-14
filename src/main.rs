@@ -168,7 +168,7 @@ async fn run(event_loop: EventLoop<()>, window: Rc<Window>) {
 
                     let old_pos = mouse_pos;
 
-                    let center = vec2(size.width, size.height) / 2.0;
+                    let center = 0.5 * vec2(size.width, size.height);
                     let offset = vec2(position.x, position.y) - center;
                     mouse_pos = vec2(offset.x, -offset.y) / center;
 
