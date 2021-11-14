@@ -1,44 +1,26 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Particle Life</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+        html {
+            background-color: black;
+        }
 
-  <style>
-    html,
-    body {
-      margin: 0px;
-      padding: 0px;
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      position: absolute;
-      background: black;
-      z-index: 0;
-    }
-  </style>
+        body {
+            margin: 0;
+            overflow: hidden;
+        }
+    </style>
 </head>
 
 <body>
-  <script>
-    const script = document.createElement("script");
-    if ("SharedArrayBuffer" in globalThis) {
-      script.src = "./sab/particle_life.js";
-      script.onload = async () => {
-        await wasm_bindgen("./sab/particle_life_bg.wasm");
-        wasm_bindgen.run();
-      };
-    } else {
-      script.src = "./no-sab/particle_life.js";
-      script.onload = async () => {
-        await wasm_bindgen("./no-sab/particle_life_bg.wasm");
-        wasm_bindgen.run();
-      };
-    }
-    document.body.appendChild(script)
-  </script>
+    <script type="module">
+        import init from "./pkg/particle-life.js";
+        init();
+    </script>
 </body>
 
 </html>
