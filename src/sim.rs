@@ -2,8 +2,6 @@ use glam::vec2;
 use glam::Vec2;
 use palette::FromColor;
 use palette::Hsv;
-use palette::IntoColor;
-use palette::Lch;
 use palette::LinSrgb;
 use rand::Rng;
 use rand_distr::Distribution;
@@ -75,8 +73,8 @@ impl Sim {
 
         for i in 0..settings.kinds {
             let value = if i % 2 == 0 { 0.5 } else { 1.0 };
-            // Use Lch as an intermediary color space; it doesn't seem like we can convert directly to RGB for whatever reason.
-            colors.push(Lch::from_color(Hsv::new(angle * i as f32, 1.0, value)).into_color());
+            let color = Hsv::with_wp(angle * i as f32, 1.0, value);
+            colors.push(LinSrgb::from_color(color));
 
             for j in 0..settings.kinds {
                 attractions.push(if i == j {
