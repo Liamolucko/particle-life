@@ -364,6 +364,7 @@ impl State {
                     write_mask: ColorWrites::ALL,
                 }],
             }),
+            multiview: None,
         });
 
         let multisampled_framebuffer =

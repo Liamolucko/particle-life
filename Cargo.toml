@@ -7,27 +7,27 @@ resolver = "2"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bytemuck = { version = "1.7.2", features = ["derive", "min_const_generics"] }
-getrandom = { version = "0.2.3", features = ["js"] }
-glam = { version = "0.19.0", features = ["bytemuck"] }
-instant = { version = "0.1.11", features = ["wasm-bindgen"] }
+bytemuck = { version = "1.7.3", features = ["derive", "min_const_generics"] }
+getrandom = { version = "0.2.4", features = ["js"] }
+glam = { version = "0.20.2", features = ["bytemuck"] }
+instant = { version = "0.1.12", features = ["wasm-bindgen"] }
 log = "0.4.14"
 palette = { version = "0.6.0", features = ["bytemuck"] }
 rand = "0.8.4"
-rand_distr = "0.4.2"
-wgpu = { version = "0.11.0", features = ["webgl"] }
-winit = { version = "0.25.0", features = ["web-sys"] }
+rand_distr = "0.4.3"
+wgpu = { version = "0.12.0", features = ["webgl"] }
+winit = "0.26.1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1.7"
 console_log = "0.2.0"
-wasm-bindgen = "=0.2.78"
-wasm-bindgen-futures = "0.4.28"
-web-sys = { version = "0.3.55", features = ["Document", "Element", "Window"] }
+wasm-bindgen = "=0.2.79"
+wasm-bindgen-futures = "0.4.29"
+web-sys = { version = "0.3.56", features = ["Document", "Element", "Window"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 env_logger = "0.9.0"
-pollster = "0.2.4"
+pollster = "0.2.5"
 
 [profile.release]
 debug = 1

@@ -3,7 +3,6 @@ let num_circle_points: u32 = 32u;
 
 let pi: f32 = 3.14159265358979323846264338327950288;
 
-[[block]]
 struct Settings {
     wrap: u32;
 
@@ -24,7 +23,6 @@ struct Settings {
 };
 
 /// Settings which differ between render passes.
-[[block]]
 struct PassSettings {
     opacity: f32;
 };
@@ -53,13 +51,13 @@ fn vs_main(particle: Particle, [[builtin(vertex_index)]] idx: u32) -> VertexOutp
     if (settings.wrap != 0u) {
         if (pos.x > 1.0) {
             pos.x = pos.x - 2.0;
-        } elseif (pos.x < -1.0) {
+        } else if (pos.x < -1.0) {
             pos.x = pos.x + 2.0;
         }
 
         if (pos.y > 1.0) {
             pos.y = pos.y - 2.0;
-        } elseif (pos.y < -1.0) {
+        } else if (pos.y < -1.0) {
             pos.y = pos.y + 2.0;
         }
     }
@@ -103,7 +101,7 @@ fn vs_main(particle: Particle, [[builtin(vertex_index)]] idx: u32) -> VertexOutp
                     vertex.x = min(1.0, vertex.x);
                 }
             }
-        } elseif (pos.x - clip_width < -1.0) {
+        } else if (pos.x - clip_width < -1.0) {
             let middle = pos.x + cos(half_circle_angle * f32(2u * (idx / 3u) + 1u)) * clip_width;
             if (middle < -1.0) {
                 if (idx % 3u == 0u) {
@@ -135,7 +133,7 @@ fn vs_main(particle: Particle, [[builtin(vertex_index)]] idx: u32) -> VertexOutp
                     vertex.y = min(1.0, vertex.y);
                 }
             }
-        } elseif (pos.y - clip_height < -1.0) {
+        } else if (pos.y - clip_height < -1.0) {
             let middle = pos.y + sin(half_circle_angle * f32(2u * (idx / 3u) + 1u)) * clip_height;
             if (middle < -1.0) {
                 if (idx % 3u == 0u) {
