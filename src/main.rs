@@ -63,7 +63,6 @@ fn main() {
 
             win.set_onresize(Some(
                 &Closure::wrap(Box::new(move || {
-                    log::warn!("{:?}", size(&root));
                     window.set_inner_size(size(&root));
                 }) as Box<dyn Fn()>)
                 .into_js_value()
