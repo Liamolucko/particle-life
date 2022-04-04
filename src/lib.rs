@@ -95,11 +95,33 @@ pub struct RenderSettings {
 
     pub padding: [u32; 2],
 
-    pub width: f32,
-    pub height: f32,
+    /// The horizontal/vertical radius of a particle in clip space.
+    /// (A perfect circle in pixel space isn't always a perfect circle in clip space, hence why can't just pass `radius`.)
+    pub horiz_rad: f32,
+    pub vert_rad: f32,
 
     // stupid webgl alignment stuff means that vec2s in arrays are basically treated as vec4s.
     pub circle_points: [Vec4; CIRCLE_POINTS],
+}
+
+impl RenderSettings {
+    /// Create a `RenderSettings` with all the size information set for the given `size`,
+    /// and all the state information set to default.
+    pub fn new(size: LogicalSize<f32>) -> Self {
+        RenderSettings {
+            wrap: 0,
+
+            zoom: 1.0,
+            camera: vec2(0.0, 0.0),
+
+            padding: [0; 2],
+
+            horiz_rad: 2.0 * RADIUS / size.width,
+            vert_rad: 2.0 * RADIUS / size.height,
+
+            circle_points: circle_points(size),
+        }
+    }
 }
 
 fn create_multisampled_framebuffer(
@@ -162,7 +184,7 @@ pub struct State {
     pub multisampled_framebuffer: TextureView,
 
     pub last_step: Instant,
-    // The index of the next segment of the particle buffer to be written to.
+    /// The index of the next segment of the particle buffer to be written to.
     pub particle_segment: u64,
     pub step_rate: u32,
 
@@ -208,19 +230,7 @@ impl State {
         let size = window.inner_size();
         let logical_size = size.to_logical(window.scale_factor());
 
-        let render_settings = RenderSettings {
-            wrap: 0,
-
-            zoom: 1.0,
-            camera: vec2(0.0, 0.0),
-
-            padding: [0; 2],
-
-            width: logical_size.width,
-            height: logical_size.height,
-
-            circle_points: circle_points(logical_size),
-        };
+        let render_settings = RenderSettings::new(logical_size);
 
         let settings_buffer = device.create_buffer_init(&BufferInitDescriptor {
             label: Some("Settings buffer"),
@@ -430,18 +440,7 @@ impl State {
 
         let logical_size: LogicalSize<f32> = size.to_logical(scale_factor);
 
-        let new_settings = RenderSettings {
-            // Fill these in with dummy values; we aren't actually including them.
-            wrap: 0,
-            zoom: 1.0,
-            camera: vec2(0.0, 0.0),
-            padding: [0; 2],
-
-            width: logical_size.width,
-            height: logical_size.height,
-
-            circle_points: circle_points(logical_size),
-        };
+        let new_settings = RenderSettings::new(logical_size);
 
         // Update the resolution & circle points in `RenderSettings`.
         self.queue.write_buffer(

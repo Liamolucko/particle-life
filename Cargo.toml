@@ -16,7 +16,7 @@ palette = { version = "0.6.0", features = ["bytemuck"] }
 rand = "0.8.4"
 rand_distr = "0.4.3"
 wgpu = { version = "0.12.0", features = ["webgl"] }
-winit = "0.26.1"
+winit = { git = "https://github.com/Liamolucko/winit.git", branch = "resize-observer2", features = ["css-size"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1.7"

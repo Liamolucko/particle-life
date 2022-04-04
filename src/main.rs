@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use glam::vec2;
 use particle_life::settings::Settings;
 use particle_life::State;
@@ -14,12 +12,29 @@ use winit::event_loop::ControlFlow;
 use winit::event_loop::EventLoop;
 use winit::window::Fullscreen;
 use winit::window::Window;
+use winit::window::WindowBuilder;
 
 fn main() {
-    let event_loop = EventLoop::new();
-    let window = Rc::new(Window::new(&event_loop).unwrap());
+    #[cfg(target_arch = "wasm32")]
+    // Do this as early as physically possible.
+    console_error_panic_hook::set_once();
 
-    window.set_title("Particle Life");
+    let event_loop = EventLoop::new();
+    #[allow(unused_mut)]
+    let mut builder = WindowBuilder::new().with_title("Particle Life");
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        use wasm_bindgen::JsCast;
+        use winit::platform::web::WindowBuilderExtWebSys;
+
+        let document = web_sys::window().unwrap().document().unwrap();
+        let canvas = document.query_selector("canvas").unwrap().unwrap();
+
+        builder = builder.with_canvas(Some(canvas.dyn_into().unwrap()));
+    }
+
+    let window = builder.build(&event_loop).unwrap();
 
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -29,53 +44,13 @@ fn main() {
     }
     #[cfg(target_arch = "wasm32")]
     {
-        use wasm_bindgen::closure::Closure;
-        use wasm_bindgen::JsCast;
-        use winit::dpi::LogicalSize;
-        use winit::platform::web::WindowExtWebSys;
-
-        console_error_panic_hook::set_once();
         console_log::init().expect("could not initialize logger");
-
-        // On wasm, append the canvas to the document body
-        let win = web_sys::window().expect("Couldn't get window");
-
-        let document = win.document().expect("Couldn't get document");
-
-        document
-            .body()
-            .and_then(|body| body.append_child(&window.canvas()).ok())
-            .expect("couldn't append canvas to document body");
-
-        let root = document
-            .document_element()
-            .expect("Failed to get root element");
-
-        fn size(element: &web_sys::Element) -> LogicalSize<i32> {
-            // For the root <html> element, these return the size of the viewport.
-            LogicalSize::new(element.client_width(), element.client_height())
-        }
-
-        window.set_inner_size(size(&root));
-
-        {
-            let window = Rc::clone(&window);
-
-            win.set_onresize(Some(
-                &Closure::wrap(Box::new(move || {
-                    window.set_inner_size(size(&root));
-                }) as Box<dyn Fn()>)
-                .into_js_value()
-                .dyn_into()
-                .unwrap(),
-            ));
-        }
 
         wasm_bindgen_futures::spawn_local(run(event_loop, window));
     }
 }
 
-async fn run(event_loop: EventLoop<()>, window: Rc<Window>) {
+async fn run(event_loop: EventLoop<()>, window: Window) {
     let mut state = State::new(&window).await;
 
     // The offset from the center of the window in clip space.
