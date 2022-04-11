@@ -1,6 +1,6 @@
 # particle-life
 
-A(nother) port of HackerPoet/Particle-Life to the web, optimised for performance
+A(nother) port of [HackerPoet/Particle-Life](https://github.com/HackerPoet/Particle-Life) to the web, optimised for performance
 using WebAssembly.
 
 Particle Life is actually quite CPU intensive, meaning a JS implementation of it
