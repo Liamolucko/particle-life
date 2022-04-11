@@ -16,14 +16,26 @@ pub const RADIUS: f32 = 5.0;
 pub const DIAMETER: f32 = RADIUS * 2.0;
 pub const R_SMOOTH: f32 = 2.0;
 
+/// The properties between a pair of particle kinds.
+/// Everything apart from `attraction` is the same in both directions.
 #[derive(Clone, Copy, Debug)]
-pub struct SymmetricProperties {
+pub struct PairProps {
+    /// The peak attraction between two particles.
+    pub attraction: f32,
     /// The distance below which particles begin to unconditionally repel each other.
     pub repel_distance: f32,
     /// The distance above which particles have no influence on each other.
+    ///
+    /// This isn't actually used by `step` but is useful during construction.
     pub influence_radius: f32,
+
+    // Stuff which is just computed ahead-of-time to improve performance.
     /// The distance above which particles have no influence on each other, squared.
     pub influence_radius_sq: f32,
+    /// The point of maximum force, halfway between `repel_distance` and `influence_radius`.
+    pub peak: f32,
+    /// The reciprocal of the distance between `repel_distance`/`influence_radius` and `peak`.
+    pub inv_base: f32,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -56,8 +68,7 @@ pub struct Sim {
     pub friction: f32,
 
     pub colors: Vec<LinSrgb>,
-    pub symmetric_props: Vec<SymmetricProperties>,
-    pub attractions: Vec<f32>,
+    pub pair_props: Vec<PairProps>,
 
     pub particles: Vec<Particle>,
 }
@@ -65,8 +76,7 @@ pub struct Sim {
 impl Sim {
     pub fn new<R: Rng>(settings: Settings, rng: &mut R) -> Self {
         let mut colors = Vec::with_capacity(settings.kinds);
-        let mut symmetric_props = Vec::with_capacity(settings.kinds * (settings.kinds + 1) / 2);
-        let mut attractions = Vec::with_capacity(settings.kinds * settings.kinds);
+        let mut pair_props: Vec<PairProps> = Vec::with_capacity(settings.kinds * settings.kinds);
 
         // The angle between each color's hue.
         let angle = 360.0 / settings.kinds as f32;
@@ -77,13 +87,18 @@ impl Sim {
             colors.push(LinSrgb::from_color(color));
 
             for j in 0..settings.kinds {
-                attractions.push(if i == j {
+                let attraction = if i == j {
                     -f32::abs(settings.attraction_distr.sample(rng))
                 } else {
                     settings.attraction_distr.sample(rng)
-                });
+                };
 
-                if j <= i {
+                let (repel_distance, influence_radius) = if j < i {
+                    // We've already generated this one (apart from attraction),
+                    // so re-use that to make it symmetrical.
+                    let props = pair_props[j * settings.kinds + i];
+                    (props.repel_distance, props.influence_radius)
+                } else {
                     let repel_distance = if i == j {
                         DIAMETER
                     } else {
@@ -95,12 +110,17 @@ impl Sim {
                         influence_radius = repel_distance;
                     }
 
-                    symmetric_props.push(SymmetricProperties {
-                        repel_distance,
-                        influence_radius,
-                        influence_radius_sq: influence_radius * influence_radius,
-                    });
-                }
+                    (repel_distance, influence_radius)
+                };
+                pair_props.push(PairProps {
+                    attraction,
+                    repel_distance,
+                    influence_radius,
+
+                    influence_radius_sq: influence_radius * influence_radius,
+                    peak: 0.5 * (repel_distance + influence_radius),
+                    inv_base: 2.0 / (influence_radius - repel_distance),
+                });
             }
         }
 
@@ -110,8 +130,7 @@ impl Sim {
             friction: settings.friction,
 
             colors,
-            symmetric_props,
-            attractions,
+            pair_props,
 
             particles: (0..settings.particles)
                 .map(|_| Particle::generate(settings.kinds, rng))
@@ -126,11 +145,22 @@ impl Sim {
     }
 
     pub fn step(&mut self, width: f32, height: f32) {
+        let size = vec2(width, height);
+
+        // The amount we want to scale up clip space by to get to pixel space.
+        // This isn't just width because clip space ranges from -1 to 1, so it's actually 2x2.
+        let scale = 0.5 * size;
+
+        // The inverse of `x_scale` and `y_scale`, to go from pixel space to clip space.
+        let inv_scale = 2.0 / size;
+
+        // Figure out the width/height of the particles in clip space.
+        let clip_size = RADIUS * inv_scale;
+
         for i in 0..self.particles.len() {
-            for j in 0..i {
-                // We can't just use `iter` for these because the iterator would borrow `particles`, preventing us from mutating anything.
-                let p = &self.particles[i];
-                let q = &self.particles[j];
+            let p = self.particles[i];
+            for j in i + 1..self.particles.len() {
+                let q = self.particles[j];
 
                 let mut delta = q.pos - p.pos;
 
@@ -149,20 +179,20 @@ impl Sim {
                 }
 
                 // The positions are in clip space, but velocities are in pixel space, so we need to scale these up.
-                delta.x *= 0.5 * width;
-                delta.y *= 0.5 * height;
+                delta *= scale;
 
                 let dist2 = delta.length_squared();
 
-                let index = p.kind * (p.kind + 1) / 2 + q.kind;
-                let SymmetricProperties {
+                let PairProps {
+                    attraction: p_attr,
                     repel_distance,
-                    influence_radius,
                     influence_radius_sq,
-                } = self.symmetric_props[index];
+                    peak,
+                    inv_base,
+                    ..
+                } = self.pair_props[p.kind * self.colors.len() + q.kind];
 
-                // Disallow small distances to avoid division by zero, since we divide by this to normalize the vector later on.
-                if dist2 < 0.01 || dist2 > influence_radius_sq {
+                if dist2 > influence_radius_sq {
                     continue;
                 }
 
@@ -174,13 +204,11 @@ impl Sim {
                         * (1.0 / (repel_distance + R_SMOOTH) - 1.0 / (dist + R_SMOOTH));
                     (f, f)
                 } else {
-                    let mut f1 = self.attractions[p.kind * self.colors.len() + q.kind];
-                    let mut f2 = self.attractions[q.kind * self.colors.len() + p.kind];
+                    let mut f1 = p_attr;
+                    let mut f2 = self.pair_props[q.kind * self.colors.len() + p.kind].attraction;
 
                     if !self.flat_force {
-                        let peak = 0.5 * (repel_distance + influence_radius);
-                        let base = 0.5 * (influence_radius - repel_distance);
-                        let coefficient = 1.0 - (f32::abs(dist - peak) / base);
+                        let coefficient = 1.0 - (f32::abs(dist - peak) * inv_base);
 
                         f1 *= coefficient;
                         f2 *= coefficient;
@@ -196,43 +224,45 @@ impl Sim {
             }
         }
 
-        // Figure out the width/height of the particles in clip space.
-        let clip_width = 2.0 * RADIUS / width;
-        let clip_height = 2.0 * RADIUS / height;
-
         for p in self.particles.iter_mut() {
-            p.pos += vec2(2.0 * p.vel.x / width, 2.0 * p.vel.y / height);
-            p.vel *= 1.0 - self.friction;
+            let mut pos = p.pos;
+            let mut vel = p.vel;
+
+            pos += vel * inv_scale;
+            vel *= 1.0 - self.friction;
 
             if self.wrap {
-                if p.pos.x > 1.0 {
-                    p.pos.x -= 2.0;
-                } else if p.pos.x < -1.0 {
-                    p.pos.x += 2.0;
+                if pos.x > 1.0 {
+                    pos.x -= 2.0;
+                } else if pos.x < -1.0 {
+                    pos.x += 2.0;
                 }
 
-                if p.pos.y > 1.0 {
-                    p.pos.y -= 2.0;
-                } else if p.pos.y < -1.0 {
-                    p.pos.y += 2.0;
+                if pos.y > 1.0 {
+                    pos.y -= 2.0;
+                } else if pos.y < -1.0 {
+                    pos.y += 2.0;
                 }
             } else {
-                if p.pos.x + clip_width > 1.0 {
-                    p.pos.x = 1.0 - clip_width;
-                    p.vel.x *= -1.0;
-                } else if p.pos.x - clip_width < -1.0 {
-                    p.pos.x = -1.0 + clip_width;
-                    p.vel.x *= -1.0;
+                if pos.x + clip_size.x > 1.0 {
+                    pos.x = 1.0 - clip_size.x;
+                    vel.x *= -1.0;
+                } else if pos.x - clip_size.x < -1.0 {
+                    pos.x = -1.0 + clip_size.x;
+                    vel.x *= -1.0;
                 }
 
-                if p.pos.y + clip_height > 1.0 {
-                    p.pos.y = 1.0 - clip_height;
-                    p.vel.y *= -1.0;
-                } else if p.pos.y - clip_height < -1.0 {
-                    p.pos.y = -1.0 + clip_height;
-                    p.vel.y *= -1.0;
+                if pos.y + clip_size.y > 1.0 {
+                    pos.y = 1.0 - clip_size.y;
+                    vel.y *= -1.0;
+                } else if pos.y - clip_size.y < -1.0 {
+                    pos.y = -1.0 + clip_size.y;
+                    vel.y *= -1.0;
                 }
             }
+
+            p.pos = pos;
+            p.vel = vel;
         }
     }
 
