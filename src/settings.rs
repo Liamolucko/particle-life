@@ -15,7 +15,8 @@ pub struct Settings {
 }
 
 impl Settings {
-    // Ideally these would be constants, but `Normal` and `Uniform` can't yet be created in `const` contexts because they're generic.
+    // Ideally these would be constants, but `Normal` and `Uniform` can't yet be
+    // created in `const` contexts because they're generic.
     pub fn balanced() -> Settings {
         Settings {
             kinds: 9,

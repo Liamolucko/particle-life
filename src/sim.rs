@@ -22,7 +22,8 @@ pub const R_SMOOTH: f32 = 2.0;
 pub struct PairProps {
     /// The peak attraction between two particles.
     pub attraction: f32,
-    /// The distance below which particles begin to unconditionally repel each other.
+    /// The distance below which particles begin to unconditionally repel each
+    /// other.
     pub repel_distance: f32,
     /// The distance above which particles have no influence on each other.
     ///
@@ -30,17 +31,21 @@ pub struct PairProps {
     pub influence_radius: f32,
 
     // Stuff which is just computed ahead-of-time to improve performance.
-    /// The distance above which particles have no influence on each other, squared.
+    /// The distance above which particles have no influence on each other,
+    /// squared.
     pub influence_radius_sq: f32,
-    /// The point of maximum force, halfway between `repel_distance` and `influence_radius`.
+    /// The point of maximum force, halfway between `repel_distance` and
+    /// `influence_radius`.
     pub peak: f32,
-    /// The reciprocal of the distance between `repel_distance`/`influence_radius` and `peak`.
+    /// The reciprocal of the distance between
+    /// `repel_distance`/`influence_radius` and `peak`.
     pub inv_base: f32,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Particle {
-    // This is stored in clip space, so that we can just send it directly to the GPU and it doesn't require any extra work on resize.
+    // This is stored in clip space, so that we can just send it directly to the GPU and it doesn't
+    // require any extra work on resize.
     pub pos: Vec2,
     pub vel: Vec2,
     pub kind: usize,
@@ -148,7 +153,8 @@ impl Sim {
         let size = vec2(width, height);
 
         // The amount we want to scale up clip space by to get to pixel space.
-        // This isn't just width because clip space ranges from -1 to 1, so it's actually 2x2.
+        // This isn't just width because clip space ranges from -1 to 1, so it's
+        // actually 2x2.
         let scale = 0.5 * size;
 
         // The inverse of `x_scale` and `y_scale`, to go from pixel space to clip space.
@@ -178,7 +184,8 @@ impl Sim {
                     }
                 }
 
-                // The positions are in clip space, but velocities are in pixel space, so we need to scale these up.
+                // The positions are in clip space, but velocities are in pixel space, so we
+                // need to scale these up.
                 delta *= scale;
 
                 let dist2 = delta.length_squared();
@@ -192,7 +199,9 @@ impl Sim {
                     ..
                 } = self.pair_props[p.kind * self.colors.len() + q.kind];
 
-                if dist2 > influence_radius_sq {
+                // Disallow small distances to avoid division by zero, since we divide by this
+                // to normalize the vector later on.
+                if dist2 > influence_radius_sq || dist2 < 0.01 {
                     continue;
                 }
 
@@ -266,7 +275,8 @@ impl Sim {
         }
     }
 
-    /// Convert the current state of the particles into the representation used by the GPU.
+    /// Convert the current state of the particles into the representation used
+    /// by the GPU.
     pub fn export_particles(&self, buffer: &mut [GpuParticle; MAX_PARTICLES]) {
         for (i, particle) in self.particles.iter().enumerate() {
             buffer[i] = GpuParticle {

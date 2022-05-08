@@ -96,7 +96,8 @@ pub struct RenderSettings {
     pub padding: [u32; 2],
 
     /// The horizontal/vertical radius of a particle in clip space.
-    /// (A perfect circle in pixel space isn't always a perfect circle in clip space, hence why we can't just pass `radius`.)
+    /// A perfect circle in pixel space isn't always a perfect circle in clip
+    /// space, so we can't just pass `radius`.
     pub horiz_rad: f32,
     pub vert_rad: f32,
 
@@ -105,8 +106,8 @@ pub struct RenderSettings {
 }
 
 impl RenderSettings {
-    /// Create a `RenderSettings` with all the size information set for the given `size`,
-    /// and all the state information set to default.
+    /// Create a `RenderSettings` with all the size information set for the
+    /// given `size`, and all the state information set to default.
     pub fn new(size: LogicalSize<f32>) -> Self {
         RenderSettings {
             wrap: 0,
@@ -175,7 +176,8 @@ pub struct State {
     pub settings_buffer: Buffer,
     pub particle_buffer: Buffer,
 
-    // `bufferSubData` is shockingly slow in Safari, so store the buffer data here and then write it all at once.
+    // `bufferSubData` is shockingly slow in Safari, so store the buffer data here and then write
+    // it all at once.
     pub particle_buffer_data: Box<[[GpuParticle; MAX_PARTICLES]; TRAIL_LENGTH]>,
 
     pub settings_bind_group: BindGroup,
@@ -220,7 +222,8 @@ impl State {
                 &wgpu::DeviceDescriptor {
                     label: None,
                     features: wgpu::Features::empty(),
-                    // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
+                    // Make sure we use the texture resolution limits from the adapter, so we can
+                    // support images the size of the swapchain.
                     limits: Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
                 },
                 None,

@@ -171,8 +171,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             Event::MainEventsCleared => {
                 state.device.poll(Maintain::Wait);
 
-                // Note: we don't need to handle vsync here because surface.get_current_texture() blocks until the last frame is done.
-                // TODO: figure out what the deal is on the web
+                // Note: we don't need to handle vsync here because
+                // surface.get_current_texture() blocks until the last frame is done.
                 window.request_redraw();
             }
             _ => {}
