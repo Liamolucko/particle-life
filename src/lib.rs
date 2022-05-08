@@ -75,7 +75,7 @@ const MAX_PARTICLES: usize = 600;
 const PARTICLE_SEGMENT_SIZE: u64 = (size_of::<GpuParticle>() * MAX_PARTICLES) as u64;
 
 /// The number of past frames to use to create trails behind each particle.
-const TRAIL_LENGTH: u64 = 10;
+const TRAIL_LENGTH: usize = 10;
 
 // The particle information sent to the GPU.
 #[repr(C)]
@@ -96,7 +96,7 @@ pub struct RenderSettings {
     pub padding: [u32; 2],
 
     /// The horizontal/vertical radius of a particle in clip space.
-    /// (A perfect circle in pixel space isn't always a perfect circle in clip space, hence why can't just pass `radius`.)
+    /// (A perfect circle in pixel space isn't always a perfect circle in clip space, hence why we can't just pass `radius`.)
     pub horiz_rad: f32,
     pub vert_rad: f32,
 
@@ -175,6 +175,9 @@ pub struct State {
     pub settings_buffer: Buffer,
     pub particle_buffer: Buffer,
 
+    // `bufferSubData` is shockingly slow in Safari, so store the buffer data here and then write it all at once.
+    pub particle_buffer_data: Box<[[GpuParticle; MAX_PARTICLES]; TRAIL_LENGTH]>,
+
     pub settings_bind_group: BindGroup,
     pub opacity_bind_groups: Vec<BindGroup>,
 
@@ -185,7 +188,7 @@ pub struct State {
 
     pub last_step: Instant,
     /// The index of the next segment of the particle buffer to be written to.
-    pub particle_segment: u64,
+    pub particle_segment: usize,
     pub step_rate: u32,
 
     pub sim: Sim,
@@ -240,11 +243,13 @@ impl State {
 
         let sim = Sim::new(settings, &mut rng);
 
-        let particles = sim.export_particles();
+        let mut particles = [GpuParticle::default(); MAX_PARTICLES];
+        sim.export_particles(&mut particles);
 
+        let particle_buffer_data = Box::new([particles; TRAIL_LENGTH]);
         let particle_buffer = device.create_buffer_init(&BufferInitDescriptor {
             label: Some("Particle buffer"),
-            contents: bytemuck::cast_slice(&[particles; TRAIL_LENGTH as usize]),
+            contents: bytemuck::cast_slice(particle_buffer_data.as_slice()),
             usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
         });
 
@@ -399,6 +404,8 @@ impl State {
             settings_buffer,
             particle_buffer,
 
+            particle_buffer_data,
+
             settings_bind_group,
             opacity_bind_groups,
 
@@ -472,13 +479,8 @@ impl State {
             self.particle_segment += 1;
             self.particle_segment %= TRAIL_LENGTH;
 
-            let offset = self.particle_segment * PARTICLE_SEGMENT_SIZE;
-
-            self.queue.write_buffer(
-                &self.particle_buffer,
-                offset,
-                bytemuck::cast_slice(&self.sim.export_particles()),
-            );
+            self.sim
+                .export_particles(&mut self.particle_buffer_data[self.particle_segment]);
 
             steps += 1;
 
@@ -487,6 +489,12 @@ impl State {
                 self.last_step = Instant::now();
             }
         }
+
+        self.queue.write_buffer(
+            &self.particle_buffer,
+            0,
+            bytemuck::cast_slice(self.particle_buffer_data.as_slice()),
+        );
 
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -507,10 +515,10 @@ impl State {
 
             for (j, i) in (self.particle_segment + 1..)
                 .map(|i| i % TRAIL_LENGTH)
-                .take(TRAIL_LENGTH as usize)
+                .take(TRAIL_LENGTH)
                 .enumerate()
             {
-                let offset = i * PARTICLE_SEGMENT_SIZE;
+                let offset = i as u64 * PARTICLE_SEGMENT_SIZE;
                 rpass.set_vertex_buffer(
                     0,
                     self.particle_buffer.slice(

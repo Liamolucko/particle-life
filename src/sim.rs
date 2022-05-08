@@ -267,14 +267,12 @@ impl Sim {
     }
 
     /// Convert the current state of the particles into the representation used by the GPU.
-    pub fn export_particles(&self) -> [GpuParticle; MAX_PARTICLES] {
-        let mut out = [GpuParticle::default(); MAX_PARTICLES];
+    pub fn export_particles(&self, buffer: &mut [GpuParticle; MAX_PARTICLES]) {
         for (i, particle) in self.particles.iter().enumerate() {
-            out[i] = GpuParticle {
+            buffer[i] = GpuParticle {
                 pos: particle.pos,
                 color: self.colors[particle.kind],
             };
         }
-        out
     }
 }

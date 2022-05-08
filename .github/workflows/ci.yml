@@ -31,7 +31,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: install
-          args: wasm-bindgen-cli --version 0.2.79 # Keep this version in sync with Cargo.toml
+          args: wasm-bindgen-cli --version 0.2.80 # Keep this version in sync with Cargo.toml
       - name: Build
         run: |
           cargo build --release --target wasm32-unknown-unknown
