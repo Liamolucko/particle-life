@@ -330,9 +330,9 @@ impl State {
             })
             .collect();
 
-        let swapchain_format = surface.get_preferred_format(&adapter).unwrap();
+        let swapchain_format = surface.get_supported_formats(&adapter)[0];
 
-        let shader = device.create_shader_module(&include_wgsl!("shader.wgsl"));
+        let shader = device.create_shader_module(include_wgsl!("shader.wgsl"));
 
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             bind_group_layouts: &[&settings_bind_group_layout, &opacity_bind_group_layout],
@@ -363,7 +363,7 @@ impl State {
             fragment: Some(FragmentState {
                 module: &shader,
                 entry_point: "fs_main",
-                targets: &[ColorTargetState {
+                targets: &[Some(ColorTargetState {
                     format: swapchain_format,
                     // some basic blending, to make the translucent trails work.
                     // I don't really know what I'm doing when it comes to this, but this works ok.
@@ -380,7 +380,7 @@ impl State {
                         },
                     }),
                     write_mask: ColorWrites::ALL,
-                }],
+                })],
             }),
             multiview: None,
         });
@@ -502,14 +502,14 @@ impl State {
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
-                color_attachments: &[wgpu::RenderPassColorAttachment {
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &self.multisampled_framebuffer,
                     resolve_target: Some(&view),
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                         store: false,
                     },
-                }],
+                })],
                 depth_stencil_attachment: None,
             });
             rpass.set_pipeline(&self.render_pipeline);

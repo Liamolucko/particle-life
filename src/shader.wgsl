@@ -3,46 +3,46 @@ let num_circle_points: u32 = 32u;
 let pi: f32 = 3.14159265358979323846264338327950288;
 
 struct Settings {
-    wrap: u32;
+    wrap: u32,
 
-    zoom: f32;
-    camera: vec2<f32>;
+    zoom: f32,
+    camera: vec2<f32>,
 
     // Explicitly declare the padding here so that the dimensions and circle points are next to each other.
     // Also, I'm not sure this padding would even be there outside webgl, so we need to add it manually to make the layout consistent.
-    padding1: u32;
-    padding2: u32;
+    padding1: u32,
+    padding2: u32,
 
     /// The horizontal/vertical radius of a particle in clip space.
     /// (A perfect circle in pixel space isn't always a perfect circle in clip space, hence why can't just pass `radius`.)
-    horiz_rad: f32;
-    vert_rad: f32;
+    horiz_rad: f32,
+    vert_rad: f32,
 
     // On WebGL, anything in an array is treated as though it is at minimum the size of a vec4,
     // so manually set the stride up on other platforms too.
-    circle_points: [[stride(16)]] array<vec2<f32>, num_circle_points>;
-};
+    circle_points: array<vec4<f32>, num_circle_points>,
+}
 
 /// Settings which differ between render passes.
 struct PassSettings {
-    opacity: f32;
-};
+    opacity: f32,
+}
 
-[[group(0), binding(0)]] var<uniform> settings: Settings;
-[[group(1), binding(0)]] var<uniform> pass_settings: PassSettings;
+@group(0) @binding(0) var<uniform> settings: Settings;
+@group(1) @binding(0) var<uniform> pass_settings: PassSettings;
 
 struct Particle {
-    [[location(0)]] pos: vec2<f32>;
-    [[location(1)]] color: vec3<f32>;
-};
+    @location(0) pos: vec2<f32>,
+    @location(1) color: vec3<f32>,
+}
 
 struct VertexOutput {
-    [[builtin(position)]] pos: vec4<f32>;
-    [[location(0)]] color: vec3<f32>;
-};
+    @builtin(position) pos: vec4<f32>,
+    @location(0) color: vec3<f32>,
+}
 
-[[stage(vertex)]]
-fn vs_main(particle: Particle, [[builtin(vertex_index)]] idx: u32) -> VertexOutput {
+@vertex
+fn vs_main(particle: Particle, @builtin(vertex_index) idx: u32) -> VertexOutput {
     // Half the angle between each line from the centre.
     // This isn't a proper constant because WGSL won't let me do division there.
     let half_circle_angle: f32 = pi / f32(num_circle_points);
@@ -68,17 +68,17 @@ fn vs_main(particle: Particle, [[builtin(vertex_index)]] idx: u32) -> VertexOutp
     if (idx % 3u == 0u) {
         circle_point = vec2<f32>(0.0, 0.0);
     } else {
-        var point: u32;
+        var point_idx: u32;
         if (idx % 3u == 1u) {
-            point = idx / 3u;
+            point_idx = idx / 3u;
         } else {
-            point = idx / 3u + 1u;
-            if (point == num_circle_points) {
-                point = 0u;
+            point_idx = idx / 3u + 1u;
+            if (point_idx == num_circle_points) {
+                point_idx = 0u;
             }
         }
 
-        circle_point = settings.circle_points[point];
+        circle_point = settings.circle_points[point_idx].xy;
     }
 
     var vertex = pos + circle_point;
@@ -155,7 +155,7 @@ fn vs_main(particle: Particle, [[builtin(vertex_index)]] idx: u32) -> VertexOutp
     return out;
 }
 
-[[stage(fragment)]]
-fn fs_main([[location(0)]] color: vec3<f32>) -> [[location(0)]] vec4<f32> {
+@fragment
+fn fs_main(@location(0) color: vec3<f32>) -> @location(0) vec4<f32> {
     return vec4<f32>(color, pass_settings.opacity);
 }
