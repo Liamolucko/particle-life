@@ -25,6 +25,8 @@ struct Settings {
 
 /// Settings which differ between render passes.
 struct PassSettings {
+    // Pad out to 16 bytes for WebGL.
+    @size(16)
     opacity: f32,
 }
 
