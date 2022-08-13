@@ -306,7 +306,7 @@ impl State {
                     ty: BindingType::Buffer {
                         ty: BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: NonZeroU64::new(4),
+                        min_binding_size: NonZeroU64::new(16),
                     },
                     count: None,
                 }],
