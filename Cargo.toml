@@ -29,3 +29,10 @@ pollster = "0.2.5"
 
 [profile.release]
 debug = 1
+
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "step"
+harness = false

@@ -129,6 +129,13 @@ impl Sim {
             }
         }
 
+        let mut particles: Vec<_> = (0..settings.particles)
+            .map(|_| Particle::generate(settings.kinds, rng))
+            .collect();
+        // Sort the particles by kind so that we're advancing linearly through
+        // the particle kinds, which is better for cache.
+        particles.sort_unstable_by_key(|particle| particle.kind);
+
         Self {
             wrap: false,
             flat_force: settings.flat_force,
@@ -137,9 +144,7 @@ impl Sim {
             colors,
             pair_props,
 
-            particles: (0..settings.particles)
-                .map(|_| Particle::generate(settings.kinds, rng))
-                .collect(),
+            particles,
         }
     }
 
@@ -147,6 +152,9 @@ impl Sim {
         for particle in self.particles.iter_mut() {
             *particle = Particle::generate(self.colors.len(), rng);
         }
+        // Sort the particles by kind so that we're advancing linearly through
+        // the particle kinds, which is better for cache.
+        self.particles.sort_unstable_by_key(|particle| particle.kind);
     }
 
     pub fn step(&mut self, width: f32, height: f32) {
