@@ -154,7 +154,8 @@ impl Sim {
         }
         // Sort the particles by kind so that we're advancing linearly through
         // the particle kinds, which is better for cache.
-        self.particles.sort_unstable_by_key(|particle| particle.kind);
+        self.particles
+            .sort_unstable_by_key(|particle| particle.kind);
     }
 
     pub fn step(&mut self, width: f32, height: f32) {
