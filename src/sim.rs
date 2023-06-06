@@ -180,14 +180,14 @@ impl Sim {
                     //     delta += 2.0
                     // }
                     //
-                    // Multiplying by 0.5 then rounding means that we get this mapping:
+                    // Multiplying by 0.5, adding 0.5, then flooring means that we get this mapping:
                     // -3.0 - -1.0 -> -1.0
                     // -1.0 -  1.0 ->  0.0
                     //  1.0 -  3.0 ->  1.0
                     //
                     // So, by then multiplying that by -2.0 we get the effect we want.
-                    delta.x += -2.0 * f32::round(0.5 * delta.x);
-                    delta.y += -2.0 * f32::round(0.5 * delta.y);
+                    delta.x += -2.0 * f32::floor(0.5 * delta.x + 0.5);
+                    delta.y += -2.0 * f32::floor(0.5 * delta.y + 0.5);
                 }
 
                 // The positions are in clip space, but velocities are in pixel space, so we
