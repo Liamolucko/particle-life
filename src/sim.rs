@@ -88,7 +88,7 @@ impl Sim {
 
         for i in 0..settings.kinds {
             let value = if i % 2 == 0 { 0.5 } else { 1.0 };
-            let color = Hsv::with_wp(angle * i as f32, 1.0, value);
+            let color = Hsv::new(angle * i as f32, 1.0, value);
             colors.push(LinSrgb::from_color(color));
 
             for j in 0..settings.kinds {

@@ -39,6 +39,7 @@ use wgpu::ColorWrites;
 use wgpu::CommandEncoderDescriptor;
 use wgpu::Device;
 use wgpu::FragmentState;
+use wgpu::InstanceDescriptor;
 use wgpu::Limits;
 use wgpu::MultisampleState;
 use wgpu::PipelineLayoutDescriptor;
@@ -144,6 +145,7 @@ fn create_multisampled_framebuffer(
             dimension: TextureDimension::D2,
             format,
             usage: TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
         })
         .create_view(&TextureViewDescriptor::default())
 }
@@ -204,9 +206,16 @@ impl State {
     pub async fn new(window: &Window) -> Self {
         let settings = Settings::balanced();
 
-        let instance = wgpu::Instance::new(Backends::all());
+        let instance = wgpu::Instance::new(InstanceDescriptor {
+            backends: Backends::all(),
+            dx12_shader_compiler: Default::default(),
+        });
 
-        let surface = unsafe { instance.create_surface(window) };
+        let surface = unsafe {
+            instance
+                .create_surface(window)
+                .expect("failed to create surface")
+        };
 
         let adapter = instance
             .request_adapter(&RequestAdapterOptions {
@@ -330,7 +339,7 @@ impl State {
             })
             .collect();
 
-        let swapchain_format = surface.get_supported_formats(&adapter)[0];
+        let swapchain_format = surface.get_capabilities(&adapter).formats[0];
 
         let shader = device.create_shader_module(include_wgsl!("shader.wgsl"));
 
@@ -396,6 +405,8 @@ impl State {
                 width: size.width,
                 height: size.height,
                 present_mode: PresentMode::Fifo,
+                alpha_mode: Default::default(),
+                view_formats: Default::default(),
             },
         );
 
@@ -437,6 +448,8 @@ impl State {
                 width: size.width,
                 height: size.height,
                 present_mode: PresentMode::Fifo,
+                alpha_mode: Default::default(),
+                view_formats: Default::default(),
             },
         );
 

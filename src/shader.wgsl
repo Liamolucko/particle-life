@@ -1,6 +1,6 @@
-let num_circle_points: u32 = 32u;
+const num_circle_points: u32 = 32u;
 
-let pi: f32 = 3.14159265358979323846264338327950288;
+const pi: f32 = 3.14159265358979323846264338327950288;
 
 struct Settings {
     wrap: u32,
