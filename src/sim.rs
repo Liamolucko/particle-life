@@ -173,17 +173,21 @@ impl Sim {
                 let mut delta = q.pos - p.pos;
 
                 if self.wrap {
-                    if delta.x > 1.0 {
-                        delta.x -= 2.0;
-                    } else if delta.x < -1.0 {
-                        delta.x += 2.0;
-                    }
-
-                    if delta.y > 1.0 {
-                        delta.y -= 2.0;
-                    } else if delta.y < -1.0 {
-                        delta.y += 2.0;
-                    }
+                    // These are faster one-line versions of:
+                    // if delta > 1.0 {
+                    //     delta -= 2.0;
+                    // } else if delta < -1.0 {
+                    //     delta += 2.0
+                    // }
+                    //
+                    // Multiplying by 0.5 then rounding means that we get this mapping:
+                    // -3.0 - -1.0 -> -1.0
+                    // -1.0 -  1.0 ->  0.0
+                    //  1.0 -  3.0 ->  1.0
+                    //
+                    // So, by then multiplying that by -2.0 we get the effect we want.
+                    delta.x += -2.0 * f32::round(0.5 * delta.x);
+                    delta.y += -2.0 * f32::round(0.5 * delta.y);
                 }
 
                 // The positions are in clip space, but velocities are in pixel space, so we
@@ -243,17 +247,8 @@ impl Sim {
             vel *= 1.0 - self.friction;
 
             if self.wrap {
-                if pos.x > 1.0 {
-                    pos.x -= 2.0;
-                } else if pos.x < -1.0 {
-                    pos.x += 2.0;
-                }
-
-                if pos.y > 1.0 {
-                    pos.y -= 2.0;
-                } else if pos.y < -1.0 {
-                    pos.y += 2.0;
-                }
+                pos.x += -2.0 * f32::round(0.5 * pos.x);
+                pos.y += -2.0 * f32::round(0.5 * pos.y);
             } else {
                 if pos.x + clip_size.x > 1.0 {
                     pos.x = 1.0 - clip_size.x;
