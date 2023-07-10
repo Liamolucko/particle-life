@@ -6,10 +6,10 @@ use wgpu::Maintain;
 use winit::event::ElementState;
 use winit::event::Event;
 use winit::event::MouseScrollDelta;
-use winit::event::VirtualKeyCode;
 use winit::event::WindowEvent;
 use winit::event_loop::ControlFlow;
 use winit::event_loop::EventLoop;
+use winit::keyboard::Key;
 use winit::window::Fullscreen;
 use winit::window::Window;
 use winit::window::WindowBuilder;
@@ -65,56 +65,49 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::Resized(size) => state.resize(size, window.scale_factor()),
                 WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
-                WindowEvent::KeyboardInput { input, .. } => {
-                    if let Some(code) = input.virtual_keycode {
-                        if input.state == ElementState::Pressed {
-                            match code {
-                                VirtualKeyCode::W => state.toggle_wrap(),
+                WindowEvent::KeyboardInput { event, .. } => {
+                    if event.state == ElementState::Pressed {
+                        match event.logical_key {
+                            Key::Character(char) => match char.as_str() {
+                                "w" => state.toggle_wrap(),
 
-                                VirtualKeyCode::B
-                                | VirtualKeyCode::C
-                                | VirtualKeyCode::D
-                                | VirtualKeyCode::F
-                                | VirtualKeyCode::G
-                                | VirtualKeyCode::H
-                                | VirtualKeyCode::L
-                                | VirtualKeyCode::M
-                                | VirtualKeyCode::Q
-                                | VirtualKeyCode::S => {
-                                    let settings = match code {
-                                        VirtualKeyCode::B => Settings::balanced(),
-                                        VirtualKeyCode::C => Settings::chaos(),
-                                        VirtualKeyCode::D => Settings::diversity(),
-                                        VirtualKeyCode::F => Settings::frictionless(),
-                                        VirtualKeyCode::G => Settings::gliders(),
-                                        VirtualKeyCode::H => Settings::homogeneity(),
-                                        VirtualKeyCode::L => Settings::large_clusters(),
-                                        VirtualKeyCode::M => Settings::medium_clusters(),
-                                        VirtualKeyCode::Q => Settings::quiescence(),
-                                        VirtualKeyCode::S => Settings::small_clusters(),
+                                "b" | "c" | "d" | "f" | "g" | "h" | "l" | "m" | "q" | "s" => {
+                                    let settings = match char.as_str() {
+                                        "b" => Settings::balanced(),
+                                        "c" => Settings::chaos(),
+                                        "d" => Settings::diversity(),
+                                        "f" => Settings::frictionless(),
+                                        "g" => Settings::gliders(),
+                                        "h" => Settings::homogeneity(),
+                                        "l" => Settings::large_clusters(),
+                                        "m" => Settings::medium_clusters(),
+                                        "q" => Settings::quiescence(),
+                                        "s" => Settings::small_clusters(),
                                         _ => unreachable!(),
                                     };
 
                                     state.replace_settings(settings, &mut rng);
                                 }
 
-                                VirtualKeyCode::Return => state.regenerate_particles(&mut rng),
-                                VirtualKeyCode::Space => state.step_rate = 30,
-
-                                VirtualKeyCode::F11 => {
-                                    if window.fullscreen().is_some() {
-                                        window.set_fullscreen(None);
-                                    } else {
-                                        window.set_fullscreen(Some(Fullscreen::Borderless(None)))
-                                    }
-                                }
-
                                 _ => {}
+                            },
+
+                            Key::Enter => state.regenerate_particles(&mut rng),
+                            Key::Space => state.step_rate = 30,
+
+                            Key::F11 => {
+                                if window.fullscreen().is_some() {
+                                    window.set_fullscreen(None);
+                                } else {
+                                    window.set_fullscreen(Some(Fullscreen::Borderless(None)))
+                                }
                             }
-                        } else if code == VirtualKeyCode::Space {
-                            // Space was lifted, set the step rate back to normal.
-                            state.step_rate = 300;
+
+                            _ => {}
                         }
+                    } else if event.logical_key == Key::Space {
+                        // Space was lifted, set the step rate back to normal.
+                        state.step_rate = 300;
                     }
                 }
                 WindowEvent::MouseWheel { delta, .. } => {

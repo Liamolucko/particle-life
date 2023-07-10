@@ -9,12 +9,12 @@ use glam::vec2;
 use glam::vec4;
 use glam::Vec2;
 use glam::Vec4;
-use instant::Instant;
 use palette::LinSrgb;
 use rand::rngs::OsRng;
 use rand::Rng;
 use sim::Sim;
 use sim::RADIUS;
+use web_time::Instant;
 use wgpu::include_wgsl;
 use wgpu::util::BufferInitDescriptor;
 use wgpu::util::DeviceExt;
@@ -188,7 +188,7 @@ pub struct State {
     pub render_pipeline: RenderPipeline,
 
     pub swapchain_format: TextureFormat,
-    pub multisampled_framebuffer: TextureView,
+    pub multisampled_framebuffer: Option<TextureView>,
 
     pub last_step: Instant,
     /// The index of the next segment of the particle buffer to be written to.
@@ -242,10 +242,8 @@ impl State {
 
         let mut rng = OsRng;
 
-        let size = window.inner_size();
-        let logical_size = size.to_logical(window.scale_factor());
-
-        let render_settings = RenderSettings::new(logical_size);
+        // Fill this in with a dummy size for now.
+        let render_settings = RenderSettings::new(LogicalSize::new(1.0, 1.0));
 
         let settings_buffer = device.create_buffer_init(&BufferInitDescriptor {
             label: Some("Settings buffer"),
@@ -394,22 +392,6 @@ impl State {
             multiview: None,
         });
 
-        let multisampled_framebuffer =
-            create_multisampled_framebuffer(&device, swapchain_format, size.width, size.height);
-
-        surface.configure(
-            &device,
-            &SurfaceConfiguration {
-                usage: TextureUsages::RENDER_ATTACHMENT,
-                format: swapchain_format,
-                width: size.width,
-                height: size.height,
-                present_mode: PresentMode::Fifo,
-                alpha_mode: Default::default(),
-                view_formats: Default::default(),
-            },
-        );
-
         Self {
             device,
             queue,
@@ -426,7 +408,7 @@ impl State {
             render_pipeline,
 
             swapchain_format,
-            multisampled_framebuffer,
+            multisampled_framebuffer: None,
 
             last_step: Instant::now(),
             particle_segment: 0,
@@ -454,12 +436,12 @@ impl State {
         );
 
         // Replace the framebuffer with a new one the correct size
-        self.multisampled_framebuffer = create_multisampled_framebuffer(
+        self.multisampled_framebuffer = Some(create_multisampled_framebuffer(
             &self.device,
             self.swapchain_format,
             size.width,
             size.height,
-        );
+        ));
 
         let logical_size: LogicalSize<f32> = size.to_logical(scale_factor);
 
@@ -474,6 +456,9 @@ impl State {
     }
 
     pub fn render(&mut self, width: f32, height: f32) {
+        // Don't render until we know what the size of the window is.
+        let Some(multisampled_framebuffer) = &self.multisampled_framebuffer else { return };
+
         let frame = self
             .surface
             .get_current_texture()
@@ -516,7 +501,7 @@ impl State {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.multisampled_framebuffer,
+                    view: multisampled_framebuffer,
                     resolve_target: Some(&view),
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
