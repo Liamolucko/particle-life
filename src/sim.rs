@@ -247,8 +247,8 @@ impl Sim {
             vel *= 1.0 - self.friction;
 
             if self.wrap {
-                pos.x += -2.0 * f32::round(0.5 * pos.x);
-                pos.y += -2.0 * f32::round(0.5 * pos.y);
+                pos.x += -2.0 * f32::floor(0.5 * pos.x + 0.5);
+                pos.y += -2.0 * f32::floor(0.5 * pos.y + 0.5);
             } else {
                 if pos.x + clip_size.x > 1.0 {
                     pos.x = 1.0 - clip_size.x;
