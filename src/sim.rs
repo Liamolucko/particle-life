@@ -129,9 +129,11 @@ impl Sim {
             }
         }
 
-        let particles: Vec<_> = (0..settings.particles)
+        let mut particles: Vec<_> = (0..settings.particles)
             .map(|_| Particle::generate(settings.kinds, rng))
             .collect();
+
+        particles.sort_unstable_by_key(|particle| particle.kind);
 
         Self {
             wrap: false,
