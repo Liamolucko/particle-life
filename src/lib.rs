@@ -457,7 +457,9 @@ impl State {
 
     pub fn render(&mut self, width: f32, height: f32) {
         // Don't render until we know what the size of the window is.
-        let Some(multisampled_framebuffer) = &self.multisampled_framebuffer else { return };
+        let Some(multisampled_framebuffer) = &self.multisampled_framebuffer else {
+            return;
+        };
 
         let frame = self
             .surface
